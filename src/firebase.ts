@@ -1,40 +1,44 @@
 import { initializeApp } from 'firebase/app';
-import {
-  Firestore,
-  doc,
-  getDocFromServer,
-  getFirestore,
-  initializeFirestore,
-} from 'firebase/firestore';
+import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
+import { FirestoreRestConfig, restProbeConnection } from './utils/firestoreRestClient';
 
 const app = initializeApp(firebaseConfig);
 
-function createFirestoreClient(): Firestore {
-  try {
-    return initializeFirestore(
-      app,
-      {
-        experimentalForceLongPolling: true,
-      },
-      firebaseConfig.firestoreDatabaseId
-    );
-  } catch {
-    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
-  }
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+export const FIRESTORE_REST_CONFIG: FirestoreRestConfig = {
+  projectId: firebaseConfig.projectId,
+  databaseId: firebaseConfig.firestoreDatabaseId,
+  apiKey: firebaseConfig.apiKey,
+};
+
+let sdkTransportDegraded = false;
+
+export function markSdkTransportDegraded(): void {
+  sdkTransportDegraded = true;
 }
 
-export const db = createFirestoreClient();
+export function isSdkTransportDegraded(): boolean {
+  return sdkTransportDegraded;
+}
 
 /**
  * Startup Firestore connectivity check as required by firebase-integration-rpc.
+ * Distinguishes blocked WebChannel streaming (where stateless HTTPS REST works)
+ * from an actually offline client or invalid Firebase configuration.
  */
 async function testConnection(): Promise<void> {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Konfigurasi Firebase gagal terhubung: klien sedang offline.');
+      const restReachable = await restProbeConnection(FIRESTORE_REST_CONFIG, 2500);
+      if (restReachable) {
+        sdkTransportDegraded = true;
+      } else {
+        console.error('Konfigurasi Firebase gagal terhubung: klien sedang offline.');
+      }
     }
   }
 }

@@ -5,7 +5,6 @@ import {
   doc,
   getDoc,
   getDocFromServer,
-  getDocs,
   getDocsFromServer,
   limit,
   query,
@@ -15,9 +14,27 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { OperationType, db, handleFirestoreError } from '../firebase';
+import {
+  FIRESTORE_REST_CONFIG,
+  OperationType,
+  db,
+  handleFirestoreError,
+  isSdkTransportDegraded,
+  markSdkTransportDegraded,
+} from '../firebase';
 import { CustomMcqQuestion, SiteContentConfig, mergeSiteContent } from '../types/siteConfig';
 import { StoredSurveyResponse, SurveyDraft } from '../types/survey';
+import {
+  FirestoreRestCommitWrite,
+  FirestoreRestError,
+  buildCommitDeleteWrite,
+  buildCommitSetWrite,
+  parseFirestoreTimestampMs,
+  restCommit,
+  restDeleteDoc,
+  restGetDoc,
+  restRunCollectionQuery,
+} from '../utils/firestoreRestClient';
 import { buildFirestorePayload } from '../utils/surveyLogic';
 import {
   deriveMashroVaultId,
@@ -55,6 +72,9 @@ function getVaultId(): Promise<string> {
 }
 
 function isPermissionDenied(error: unknown): boolean {
+  if (error instanceof FirestoreRestError && error.code === 'permission-denied') {
+    return true;
+  }
   const code = (error as { code?: string } | null)?.code;
   const msg = error instanceof Error ? error.message : String(error);
   return (
@@ -65,14 +85,42 @@ function isPermissionDenied(error: unknown): boolean {
 }
 
 function isQuotaExceeded(error: unknown): boolean {
+  if (error instanceof FirestoreRestError && error.code === 'resource-exhausted') {
+    return true;
+  }
   const msg = error instanceof Error ? error.message : String(error);
-  return msg.toLowerCase().includes('quota exceeded');
+  return msg.toLowerCase().includes('quota exceeded') || msg.includes('RESOURCE_EXHAUSTED');
+}
+
+function isNetworkOrOfflineError(error: unknown): boolean {
+  if (error instanceof FirestoreRestError && error.code === 'unavailable') {
+    return true;
+  }
+  const code = (error as { code?: string } | null)?.code;
+  if (code === 'unavailable' || code === 'deadline-exceeded') {
+    return true;
+  }
+  const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return (
+    msg.includes('offline') ||
+    msg.includes('melebihi') ||
+    msg.includes('timeout') ||
+    msg.includes('could not reach') ||
+    msg.includes('unavailable') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('network')
+  );
 }
 
 function toUserFriendlyFirestoreError(error: unknown, fallback: string): Error {
   if (isQuotaExceeded(error)) {
     return new Error(
       'Kuota harian gratis Firebase Firestore telah tercapai. Kuota akan otomatis reset besok.'
+    );
+  }
+  if (isNetworkOrOfflineError(error)) {
+    return new Error(
+      'Koneksi ke Firebase Firestore sedang lambat atau terputus. Periksa internet Anda lalu coba kembali.'
     );
   }
   return error instanceof Error ? error : new Error(fallback);
@@ -112,10 +160,7 @@ function extractTimestampMs(val: unknown): number {
   if (val instanceof Date) {
     return val.getTime();
   }
-  if (typeof val === 'number' && Number.isFinite(val)) {
-    return val;
-  }
-  return Date.now();
+  return parseFirestoreTimestampMs(val);
 }
 
 async function assertValidAdminToken(token: string): Promise<void> {
@@ -127,7 +172,8 @@ async function assertValidAdminToken(token: string): Promise<void> {
 
 /**
  * Submits a completed survey response directly to Firebase Firestore in <= 4.5s
- * with zero backend/Google Cloud dependency.
+ * with zero backend/Google Cloud dependency, falling back seamlessly to stateless
+ * Firestore REST v1 if WebChannel is blocked or slow.
  */
 export async function submitSurveyResponse(
   draft: SurveyDraft,
@@ -137,6 +183,7 @@ export async function submitSurveyResponse(
   const vaultId = await getVaultId();
   const docId = generateSurveyResponseId();
   const vaultPath = `owner_vault/${vaultId}/responses/${docId}`;
+  const mirrorPath = `${COLLECTION_RESPONSES}/${docId}`;
   const vaultRef = doc(db, 'owner_vault', vaultId, 'responses', docId);
   const mirrorRef = doc(db, COLLECTION_RESPONSES, docId);
 
@@ -145,27 +192,63 @@ export async function submitSurveyResponse(
     createdAt: serverTimestamp(),
   };
 
-  try {
-    await withTimeout(
-      setDoc(vaultRef, firestoreDoc),
-      4200,
-      'Waktu pengiriman melebihi 4,5 detik. Periksa koneksi internet Anda lalu coba kirim ulang.'
-    );
-  } catch (err) {
-    if (isPermissionDenied(err)) {
-      handleFirestoreError(err, OperationType.CREATE, vaultPath);
+  let usedRestFallback = isSdkTransportDegraded();
+
+  if (!usedRestFallback) {
+    try {
+      await withTimeout(
+        setDoc(vaultRef, firestoreDoc),
+        2200,
+        'Waktu pengiriman WebChannel melebihi batas.'
+      );
+    } catch (err) {
+      if (isPermissionDenied(err)) {
+        handleFirestoreError(err, OperationType.CREATE, vaultPath);
+      }
+      if (isQuotaExceeded(err)) {
+        throw toUserFriendlyFirestoreError(err, 'Gagal mengirim jawaban survei ke Firebase Firestore.');
+      }
+      if (!isNetworkOrOfflineError(err)) {
+        throw toUserFriendlyFirestoreError(err, 'Gagal mengirim jawaban survei ke Firebase Firestore.');
+      }
+      markSdkTransportDegraded();
+      usedRestFallback = true;
     }
-    throw toUserFriendlyFirestoreError(err, 'Gagal mengirim jawaban survei ke Firebase Firestore.');
   }
 
-  // Secondary collection mirror runs non-blockingly (capped at 500ms) so UI remains <= 4.5s
-  void withTimeout(
-    setDoc(mirrorRef, firestoreDoc),
-    3000,
-    'Mirror timeout'
-  ).catch(() => {
-    // Primary durable record is already saved in owner_vault
-  });
+  if (usedRestFallback) {
+    try {
+      const write = buildCommitSetWrite(FIRESTORE_REST_CONFIG, {
+        docPath: vaultPath,
+        fields: payload as Record<string, unknown>,
+        serverTimestampFields: ['createdAt'],
+        exists: false,
+      });
+      await restCommit(FIRESTORE_REST_CONFIG, [write], 2200);
+    } catch (restErr) {
+      if (isPermissionDenied(restErr)) {
+        handleFirestoreError(restErr, OperationType.CREATE, vaultPath);
+      }
+      throw toUserFriendlyFirestoreError(restErr, 'Gagal mengirim jawaban survei ke Firebase Firestore.');
+    }
+  }
+
+  // Secondary collection mirror runs non-blockingly so UI remains <= 4.5s
+  if (usedRestFallback) {
+    const mirrorWrite = buildCommitSetWrite(FIRESTORE_REST_CONFIG, {
+      docPath: mirrorPath,
+      fields: payload as Record<string, unknown>,
+      serverTimestampFields: ['createdAt'],
+      exists: false,
+    });
+    void restCommit(FIRESTORE_REST_CONFIG, [mirrorWrite], 2500).catch(() => {
+      // Primary durable record is already saved in owner_vault
+    });
+  } else {
+    void withTimeout(setDoc(mirrorRef, firestoreDoc), 2500, 'Mirror timeout').catch(() => {
+      // Primary durable record is already saved in owner_vault
+    });
+  }
 
   return docId;
 }
@@ -188,35 +271,63 @@ export async function fetchSurveyResponses(token: string): Promise<StoredSurveyR
     limit(500)
   );
 
-  try {
-    let snap;
+  if (!isSdkTransportDegraded()) {
     try {
-      snap = await withTimeout(
+      const snap = await withTimeout(
         getDocsFromServer(responsesQuery),
-        6000,
-        'Waktu muat data Firebase melebihi batas. Coba muat ulang.'
+        3200,
+        'Waktu muat data WebChannel melebihi batas.'
       );
-    } catch (serverErr) {
-      if (isPermissionDenied(serverErr)) throw serverErr;
-      snap = await getDocs(responsesQuery);
-    }
 
-    const items: StoredSurveyResponse[] = snap.docs.map((docSnap) => {
-      const data = docSnap.data() as Record<string, unknown>;
-      return {
-        ...(data as Omit<StoredSurveyResponse, 'id' | 'createdAtMs'>),
-        id: docSnap.id,
-        createdAtMs: extractTimestampMs(data.createdAt),
-      };
-    });
+      const items: StoredSurveyResponse[] = snap.docs.map((docSnap) => {
+        const data = docSnap.data() as Record<string, unknown>;
+        return {
+          ...(data as Omit<StoredSurveyResponse, 'id' | 'createdAtMs'>),
+          id: docSnap.id,
+          createdAtMs: extractTimestampMs(data.createdAt),
+        };
+      });
+
+      items.sort((a, b) => b.createdAtMs - a.createdAtMs);
+      return items;
+    } catch (err) {
+      if (isPermissionDenied(err)) {
+        handleFirestoreError(err, OperationType.LIST, collPath);
+      }
+      if (!isNetworkOrOfflineError(err)) {
+        throw toUserFriendlyFirestoreError(err, 'Gagal memuat daftar respons survei dari Firebase.');
+      }
+      markSdkTransportDegraded();
+    }
+  }
+
+  try {
+    const rows = await restRunCollectionQuery(
+      FIRESTORE_REST_CONFIG,
+      {
+        parentDocPath: `owner_vault/${vaultId}`,
+        collectionId: 'responses',
+        whereField: 'source',
+        whereOp: 'EQUAL',
+        whereValue: 'web_survey',
+        limit: 500,
+      },
+      4500
+    );
+
+    const items: StoredSurveyResponse[] = rows.map((row) => ({
+      ...(row.data as Omit<StoredSurveyResponse, 'id' | 'createdAtMs'>),
+      id: row.id,
+      createdAtMs: parseFirestoreTimestampMs(row.data.createdAt ?? row.createTime),
+    }));
 
     items.sort((a, b) => b.createdAtMs - a.createdAtMs);
     return items;
-  } catch (err) {
-    if (isPermissionDenied(err)) {
-      handleFirestoreError(err, OperationType.LIST, collPath);
+  } catch (restErr) {
+    if (isPermissionDenied(restErr)) {
+      handleFirestoreError(restErr, OperationType.LIST, collPath);
     }
-    throw toUserFriendlyFirestoreError(err, 'Gagal memuat daftar respons survei dari Firebase.');
+    throw toUserFriendlyFirestoreError(restErr, 'Gagal memuat daftar respons survei dari Firebase.');
   }
 }
 
@@ -225,17 +336,32 @@ export async function deleteSurveyResponse(responseId: string, token: string): P
   const vaultId = await getVaultId();
   const docPath = `owner_vault/${vaultId}/responses/${responseId}`;
 
-  try {
-    await withTimeout(
-      deleteDoc(doc(db, 'owner_vault', vaultId, 'responses', responseId)),
-      4500,
-      'Waktu penghapusan respons melebihi batas.'
-    );
-  } catch (err) {
-    if (isPermissionDenied(err)) {
-      handleFirestoreError(err, OperationType.DELETE, docPath);
+  if (!isSdkTransportDegraded()) {
+    try {
+      await withTimeout(
+        deleteDoc(doc(db, 'owner_vault', vaultId, 'responses', responseId)),
+        2500,
+        'Waktu penghapusan WebChannel melebihi batas.'
+      );
+      return;
+    } catch (err) {
+      if (isPermissionDenied(err)) {
+        handleFirestoreError(err, OperationType.DELETE, docPath);
+      }
+      if (!isNetworkOrOfflineError(err)) {
+        throw toUserFriendlyFirestoreError(err, 'Gagal menghapus respons survei dari Firebase.');
+      }
+      markSdkTransportDegraded();
     }
-    throw toUserFriendlyFirestoreError(err, 'Gagal menghapus respons survei dari Firebase.');
+  }
+
+  try {
+    await restDeleteDoc(FIRESTORE_REST_CONFIG, docPath, 3500);
+  } catch (restErr) {
+    if (isPermissionDenied(restErr)) {
+      handleFirestoreError(restErr, OperationType.DELETE, docPath);
+    }
+    throw toUserFriendlyFirestoreError(restErr, 'Gagal menghapus respons survei dari Firebase.');
   }
 }
 
@@ -245,18 +371,31 @@ async function safeGetSiteConfigDoc(
 ): Promise<Record<string, unknown> | null> {
   const docPath = `owner_vault/${vaultId}/site_config/${configId}`;
   const docRef = doc(db, 'owner_vault', vaultId, 'site_config', configId);
-  try {
-    let snap;
+
+  if (!isSdkTransportDegraded()) {
     try {
-      snap = await withTimeout(getDocFromServer(docRef), 4500, 'Timeout');
-    } catch (serverErr) {
-      if (isPermissionDenied(serverErr)) throw serverErr;
-      snap = await getDoc(docRef);
+      const snap = await withTimeout(
+        getDocFromServer(docRef),
+        2500,
+        'Waktu muat konfigurasi WebChannel melebihi batas.'
+      );
+      return snap.exists() ? (snap.data() as Record<string, unknown>) : null;
+    } catch (err) {
+      if (isPermissionDenied(err)) {
+        handleFirestoreError(err, OperationType.GET, docPath);
+      }
+      if (!isNetworkOrOfflineError(err)) {
+        return null;
+      }
+      markSdkTransportDegraded();
     }
-    return snap.exists() ? (snap.data() as Record<string, unknown>) : null;
-  } catch (err) {
-    if (isPermissionDenied(err)) {
-      handleFirestoreError(err, OperationType.GET, docPath);
+  }
+
+  try {
+    return await restGetDoc(FIRESTORE_REST_CONFIG, docPath, 2800);
+  } catch (restErr) {
+    if (isPermissionDenied(restErr)) {
+      handleFirestoreError(restErr, OperationType.GET, docPath);
     }
     return null;
   }
@@ -284,53 +423,97 @@ export async function saveSiteConfig(
   const vaultId = await getVaultId();
   const split = splitSiteConfigForFirestore(siteConfig);
 
+  const mainPath = `owner_vault/${vaultId}/site_config/main`;
+  const heroPath = `owner_vault/${vaultId}/site_config/hero_image`;
+  const compPath = `owner_vault/${vaultId}/site_config/composition_image`;
+
   const mainRef = doc(db, 'owner_vault', vaultId, 'site_config', 'main');
   const heroRef = doc(db, 'owner_vault', vaultId, 'site_config', 'hero_image');
   const compRef = doc(db, 'owner_vault', vaultId, 'site_config', 'composition_image');
 
+  if (!isSdkTransportDegraded()) {
+    try {
+      const batch = writeBatch(db);
+      batch.set(mainRef, {
+        schemaVersion: 1,
+        content: split.mainContent,
+        updatedAt: serverTimestamp(),
+      });
+
+      if (split.heroImageDoc) {
+        batch.set(heroRef, {
+          ...split.heroImageDoc,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        const heroSnap = await withTimeout(getDoc(heroRef), 1500, 'Timeout').catch(() => null);
+        if (heroSnap?.exists()) {
+          batch.delete(heroRef);
+        }
+      }
+
+      if (split.compositionImageDoc) {
+        batch.set(compRef, {
+          ...split.compositionImageDoc,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        const compSnap = await withTimeout(getDoc(compRef), 1500, 'Timeout').catch(() => null);
+        if (compSnap?.exists()) {
+          batch.delete(compRef);
+        }
+      }
+
+      await withTimeout(
+        batch.commit(),
+        4000,
+        'Waktu penyimpanan konten WebChannel melebihi batas.'
+      );
+      return mergeSiteContent(siteConfig);
+    } catch (err) {
+      if (isPermissionDenied(err)) {
+        handleFirestoreError(err, OperationType.WRITE, mainPath);
+      }
+      if (!isNetworkOrOfflineError(err)) {
+        throw toUserFriendlyFirestoreError(err, 'Gagal menyimpan perubahan konten ke Firebase Firestore.');
+      }
+      markSdkTransportDegraded();
+    }
+  }
+
   try {
-    const batch = writeBatch(db);
-    batch.set(mainRef, {
-      schemaVersion: 1,
-      content: split.mainContent,
-      updatedAt: serverTimestamp(),
-    });
+    const writes: FirestoreRestCommitWrite[] = [
+      buildCommitSetWrite(FIRESTORE_REST_CONFIG, {
+        docPath: mainPath,
+        fields: {
+          schemaVersion: 1,
+          content: split.mainContent,
+        },
+        serverTimestampFields: ['updatedAt'],
+      }),
+      split.heroImageDoc
+        ? buildCommitSetWrite(FIRESTORE_REST_CONFIG, {
+            docPath: heroPath,
+            fields: { ...split.heroImageDoc },
+            serverTimestampFields: ['updatedAt'],
+          })
+        : buildCommitDeleteWrite(FIRESTORE_REST_CONFIG, heroPath),
+      split.compositionImageDoc
+        ? buildCommitSetWrite(FIRESTORE_REST_CONFIG, {
+            docPath: compPath,
+            fields: { ...split.compositionImageDoc },
+            serverTimestampFields: ['updatedAt'],
+          })
+        : buildCommitDeleteWrite(FIRESTORE_REST_CONFIG, compPath),
+    ];
 
-    if (split.heroImageDoc) {
-      batch.set(heroRef, {
-        ...split.heroImageDoc,
-        updatedAt: serverTimestamp(),
-      });
-    } else {
-      const heroSnap = await getDoc(heroRef).catch(() => null);
-      if (heroSnap?.exists()) {
-        batch.delete(heroRef);
-      }
-    }
-
-    if (split.compositionImageDoc) {
-      batch.set(compRef, {
-        ...split.compositionImageDoc,
-        updatedAt: serverTimestamp(),
-      });
-    } else {
-      const compSnap = await getDoc(compRef).catch(() => null);
-      if (compSnap?.exists()) {
-        batch.delete(compRef);
-      }
-    }
-
-    await withTimeout(
-      batch.commit(),
-      8000,
-      'Waktu penyimpanan konten ke Firebase melebihi batas (8 detik). Silakan coba simpan kembali.'
-    );
+    await restCommit(FIRESTORE_REST_CONFIG, writes, 5000);
     return mergeSiteContent(siteConfig);
-  } catch (err) {
-    if (isPermissionDenied(err)) {
-      handleFirestoreError(err, OperationType.WRITE, `owner_vault/${vaultId}/site_config/main`);
+  } catch (restErr) {
+    if (isPermissionDenied(restErr)) {
+      handleFirestoreError(restErr, OperationType.WRITE, mainPath);
     }
-    throw toUserFriendlyFirestoreError(err, 'Gagal menyimpan perubahan konten ke Firebase Firestore.');
+    throw toUserFriendlyFirestoreError(restErr, 'Gagal menyimpan perubahan konten ke Firebase Firestore.');
   }
 }
 
@@ -342,26 +525,47 @@ export async function resetSiteConfig(token: string): Promise<void> {
     'hero_image',
     'composition_image',
   ];
+  const mainPath = `owner_vault/${vaultId}/site_config/main`;
+
+  if (!isSdkTransportDegraded()) {
+    try {
+      const refs = ids.map((id) => doc(db, 'owner_vault', vaultId, 'site_config', id));
+      const snaps = await Promise.all(
+        refs.map((ref) => withTimeout(getDoc(ref), 1500, 'Timeout').catch(() => null))
+      );
+      const batch = writeBatch(db);
+      let hasDeletes = false;
+      snaps.forEach((snap, idx) => {
+        if (snap?.exists()) {
+          batch.delete(refs[idx]);
+          hasDeletes = true;
+        }
+      });
+      if (hasDeletes) {
+        await withTimeout(batch.commit(), 3500, 'Waktu reset konten melebihi batas.');
+      }
+      return;
+    } catch (err) {
+      if (isPermissionDenied(err)) {
+        handleFirestoreError(err, OperationType.DELETE, mainPath);
+      }
+      if (!isNetworkOrOfflineError(err)) {
+        throw toUserFriendlyFirestoreError(err, 'Gagal mengatur ulang konten ke bawaan.');
+      }
+      markSdkTransportDegraded();
+    }
+  }
 
   try {
-    const refs = ids.map((id) => doc(db, 'owner_vault', vaultId, 'site_config', id));
-    const snaps = await Promise.all(refs.map((ref) => getDoc(ref).catch(() => null)));
-    const batch = writeBatch(db);
-    let hasDeletes = false;
-    snaps.forEach((snap, idx) => {
-      if (snap?.exists()) {
-        batch.delete(refs[idx]);
-        hasDeletes = true;
-      }
-    });
-    if (hasDeletes) {
-      await withTimeout(batch.commit(), 5000, 'Waktu reset konten melebihi batas.');
+    const writes = ids.map((id) =>
+      buildCommitDeleteWrite(FIRESTORE_REST_CONFIG, `owner_vault/${vaultId}/site_config/${id}`)
+    );
+    await restCommit(FIRESTORE_REST_CONFIG, writes, 4000);
+  } catch (restErr) {
+    if (isPermissionDenied(restErr)) {
+      handleFirestoreError(restErr, OperationType.DELETE, mainPath);
     }
-  } catch (err) {
-    if (isPermissionDenied(err)) {
-      handleFirestoreError(err, OperationType.DELETE, `owner_vault/${vaultId}/site_config/main`);
-    }
-    throw toUserFriendlyFirestoreError(err, 'Gagal mengatur ulang konten ke bawaan.');
+    throw toUserFriendlyFirestoreError(restErr, 'Gagal mengatur ulang konten ke bawaan.');
   }
 }
 
@@ -393,28 +597,59 @@ export async function saveOwnerGoogleFormConfig(
   const docPath = `owner_vault/${vaultId}/site_config/google_form`;
   const docRef = doc(db, 'owner_vault', vaultId, 'site_config', 'google_form');
 
-  const payload = {
+  const fieldsPayload = {
     schemaVersion: 1,
     formId: String(config.formId || 'manual-form').trim().slice(0, 128),
     formTitle: String(config.formTitle || 'MASHRO – Survei Pengalaman dan Kepuasan Pelanggan')
       .trim()
       .slice(0, 200),
     responderUri: String(config.responderUri || '').trim().slice(0, 400),
-    updatedAt: serverTimestamp(),
   };
 
+  if (!isSdkTransportDegraded()) {
+    try {
+      await withTimeout(
+        setDoc(docRef, {
+          ...fieldsPayload,
+          updatedAt: serverTimestamp(),
+        }),
+        3000,
+        'Waktu penyimpanan tautan Google Form WebChannel melebihi batas.'
+      );
+      return {
+        formId: fieldsPayload.formId,
+        formTitle: fieldsPayload.formTitle,
+        responderUri: fieldsPayload.responderUri,
+        updatedAtMs: Date.now(),
+      };
+    } catch (err) {
+      if (isPermissionDenied(err)) {
+        handleFirestoreError(err, OperationType.WRITE, docPath);
+      }
+      if (!isNetworkOrOfflineError(err)) {
+        throw toUserFriendlyFirestoreError(err, 'Gagal menyimpan tautan Google Form ke Firebase.');
+      }
+      markSdkTransportDegraded();
+    }
+  }
+
   try {
-    await withTimeout(setDoc(docRef, payload), 4500, 'Waktu penyimpanan tautan Google Form melebihi batas.');
+    const write = buildCommitSetWrite(FIRESTORE_REST_CONFIG, {
+      docPath,
+      fields: fieldsPayload,
+      serverTimestampFields: ['updatedAt'],
+    });
+    await restCommit(FIRESTORE_REST_CONFIG, [write], 3500);
     return {
-      formId: payload.formId,
-      formTitle: payload.formTitle,
-      responderUri: payload.responderUri,
+      formId: fieldsPayload.formId,
+      formTitle: fieldsPayload.formTitle,
+      responderUri: fieldsPayload.responderUri,
       updatedAtMs: Date.now(),
     };
-  } catch (err) {
-    if (isPermissionDenied(err)) {
-      handleFirestoreError(err, OperationType.WRITE, docPath);
+  } catch (restErr) {
+    if (isPermissionDenied(restErr)) {
+      handleFirestoreError(restErr, OperationType.WRITE, docPath);
     }
-    throw toUserFriendlyFirestoreError(err, 'Gagal menyimpan tautan Google Form ke Firebase.');
+    throw toUserFriendlyFirestoreError(restErr, 'Gagal menyimpan tautan Google Form ke Firebase.');
   }
 }
