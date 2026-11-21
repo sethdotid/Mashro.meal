@@ -1,0 +1,271 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net: Default-deny all paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedOwnerEmail() {
+      return isSignedIn() &&
+        request.auth.token.email is string &&
+        request.auth.token.email.lower() == 'sethdotid@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedOwnerEmail() || (
+        isSignedIn() &&
+        request.auth.token.email_verified == true &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isRating1to5(val) {
+      return val is int && val >= 1 && val <= 5;
+    }
+
+    function isRating0to10(val) {
+      return val is int && val >= 0 && val <= 10;
+    }
+
+    function isValidFavoriteComponents(arr) {
+      return arr is list &&
+        arr.size() >= 1 &&
+        arr.size() <= 5 &&
+        arr[0] is string &&
+        arr.hasOnly([
+          'Mashed Cassava',
+          'Pan-Seared Chicken',
+          'Pumpkin Puree Sauce',
+          'Steamed Green Beans & Carrots',
+          'Semua komponen'
+        ]);
+    }
+
+    function isValidPreOrderFields(data) {
+      return (
+        data.hasOrdered == 'Ya, pernah memesan' &&
+        data.keys().hasAll([
+          'preOrderEase',
+          'preOrderResponsiveness',
+          'preOrderAccuracy',
+          'preOrderPunctuality'
+        ]) &&
+        isRating1to5(data.preOrderEase) &&
+        isRating1to5(data.preOrderResponsiveness) &&
+        isRating1to5(data.preOrderAccuracy) &&
+        isRating1to5(data.preOrderPunctuality)
+      ) || (
+        data.hasOrdered == 'Tidak, hanya mencicipi' &&
+        !('preOrderEase' in data) &&
+        !('preOrderResponsiveness' in data) &&
+        !('preOrderAccuracy' in data) &&
+        !('preOrderPunctuality' in data)
+      );
+    }
+
+    function isValidSurveyResponse(data) {
+      return data.keys().hasAll([
+        'createdAt',
+        'source',
+        'hasTasted',
+        'activity',
+        'hasOrdered',
+        'ratingCassava',
+        'ratingChicken',
+        'ratingPumpkinSauce',
+        'ratingVegetables',
+        'ratingAroma',
+        'ratingTexture',
+        'ratingVisual',
+        'ratingFlavorCombo',
+        'pickupTime',
+        'foodConditionOverall',
+        'conditionCassava',
+        'conditionChicken',
+        'conditionVegetables',
+        'conditionSauce',
+        'ratingPortion',
+        'ratingIngredientCombo',
+        'satietyLevel',
+        'ratingPackPracticality',
+        'ratingPackStrength',
+        'ratingLeakResistance',
+        'ratingEaseOfOpening',
+        'ratingEatingConvenience',
+        'priceReasonable',
+        'purchaseLikelihood',
+        'purchaseFrequency',
+        'repurchaseIntention',
+        'overallSatisfaction',
+        'recommendScore',
+        'favoriteComponents'
+      ]) &&
+      data.keys().hasOnly([
+        'createdAt',
+        'source',
+        'hasTasted',
+        'activity',
+        'activityOther',
+        'hasOrdered',
+        'ratingCassava',
+        'ratingChicken',
+        'ratingPumpkinSauce',
+        'ratingVegetables',
+        'ratingAroma',
+        'ratingTexture',
+        'ratingVisual',
+        'ratingFlavorCombo',
+        'pickupTime',
+        'foodConditionOverall',
+        'conditionCassava',
+        'conditionChicken',
+        'conditionVegetables',
+        'conditionSauce',
+        'ratingPortion',
+        'ratingIngredientCombo',
+        'satietyLevel',
+        'ratingPackPracticality',
+        'ratingPackStrength',
+        'ratingLeakResistance',
+        'ratingEaseOfOpening',
+        'ratingEatingConvenience',
+        'priceReasonable',
+        'purchaseLikelihood',
+        'purchaseFrequency',
+        'repurchaseIntention',
+        'preOrderEase',
+        'preOrderResponsiveness',
+        'preOrderAccuracy',
+        'preOrderPunctuality',
+        'expressionMood',
+        'overallSatisfaction',
+        'recommendScore',
+        'favoriteComponents',
+        'feedbackNotes',
+        'customAnswers'
+      ]) &&
+      data.createdAt == request.time &&
+      data.source is string && data.source == 'web_survey' &&
+      data.hasTasted is string && data.hasTasted == 'Sudah pernah' &&
+      data.activity is string && data.activity in ['Karyawan', 'Mahasiswa', 'Dosen/Staf', 'Lainnya'] &&
+      (!('activityOther' in data) || (data.activityOther is string && data.activityOther.size() <= 100)) &&
+      data.hasOrdered is string && data.hasOrdered in ['Ya, pernah memesan', 'Tidak, hanya mencicipi'] &&
+      isRating1to5(data.ratingCassava) &&
+      isRating1to5(data.ratingChicken) &&
+      isRating1to5(data.ratingPumpkinSauce) &&
+      isRating1to5(data.ratingVegetables) &&
+      isRating1to5(data.ratingAroma) &&
+      isRating1to5(data.ratingTexture) &&
+      isRating1to5(data.ratingVisual) &&
+      isRating1to5(data.ratingFlavorCombo) &&
+      data.pickupTime is string && data.pickupTime.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$') &&
+      data.foodConditionOverall is string && data.foodConditionOverall in ['Masih enak', 'Mulai menurun', 'Sudah tidak enak'] &&
+      data.conditionCassava is string && data.conditionCassava in ['Masih enak', 'Mulai sedikit asam', 'Sudah asam'] &&
+      data.conditionChicken is string && data.conditionChicken in ['Masih empuk & enak', 'Sedikit kering', 'Alot'] &&
+      data.conditionVegetables is string && data.conditionVegetables in ['Masih segar', 'Agak layu', 'Tidak segar'] &&
+      data.conditionSauce is string && data.conditionSauce in ['Masih pas & enak', 'Mulai asin', 'Terlalu asin / berubah rasa'] &&
+      isRating1to5(data.ratingPortion) &&
+      isRating1to5(data.ratingIngredientCombo) &&
+      data.satietyLevel is string && data.satietyLevel in ['Tidak mengenyangkan', 'Cukup mengenyangkan', 'Sangat mengenyangkan'] &&
+      isRating1to5(data.ratingPackPracticality) &&
+      isRating1to5(data.ratingPackStrength) &&
+      isRating1to5(data.ratingLeakResistance) &&
+      isRating1to5(data.ratingEaseOfOpening) &&
+      isRating1to5(data.ratingEatingConvenience) &&
+      data.priceReasonable is string && data.priceReasonable in ['Sangat wajar', 'Wajar', 'Kurang wajar', 'Tidak wajar'] &&
+      isRating1to5(data.purchaseLikelihood) &&
+      data.purchaseFrequency is string && data.purchaseFrequency in [
+        'Beberapa kali seminggu',
+        'Sekali seminggu',
+        '2–3 kali sebulan',
+        'Sekali sebulan atau lebih jarang',
+        'Belum berminat'
+      ] &&
+      data.repurchaseIntention is string && data.repurchaseIntention in [
+        'Pasti akan membeli lagi',
+        'Kemungkinan besar akan membeli lagi',
+        'Ragu-ragu',
+        'Kemungkinan tidak membeli lagi'
+      ] &&
+      isValidPreOrderFields(data) &&
+      (!('expressionMood' in data) || (data.expressionMood is string && data.expressionMood in [
+        'Sangat Kecewa',
+        'Kurang Puas',
+        'Biasa Saja',
+        'Senang',
+        'Sangat Senang'
+      ])) &&
+      isRating1to5(data.overallSatisfaction) &&
+      isRating0to10(data.recommendScore) &&
+      isValidFavoriteComponents(data.favoriteComponents) &&
+      (!('feedbackNotes' in data) || (data.feedbackNotes is string && data.feedbackNotes.size() <= 1000)) &&
+      (!('customAnswers' in data) || (data.customAnswers is map && data.customAnswers.keys().size() <= 20));
+    }
+
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['email', 'role', 'createdAt']) &&
+        data.keys().hasOnly(['email', 'role', 'createdAt']) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+        data.role is string && data.role in ['owner', 'admin'] &&
+        data.createdAt == request.time;
+    }
+
+    function isValidOwnerSettings(data) {
+      return data.keys().hasAll(['formId', 'formTitle', 'responderUri', 'updatedAt']) &&
+        data.keys().hasOnly(['formId', 'formTitle', 'responderUri', 'updatedAt']) &&
+        data.formId is string && data.formId.size() >= 1 && data.formId.size() <= 128 &&
+        data.formTitle is string && data.formTitle.size() >= 1 && data.formTitle.size() <= 200 &&
+        data.responderUri is string && data.responderUri.size() >= 1 && data.responderUri.size() <= 300 &&
+        data.updatedAt == request.time;
+    }
+
+    // --- Collection Rules ---
+
+    // 1. Survey Responses: Public create-only with strict blueprint validation; private read/delete for verified owner only
+    match /survey_responses/{responseId} {
+      allow create: if isValidId(responseId) && isValidSurveyResponse(incoming());
+      allow get: if isValidId(responseId) && isAdmin();
+      allow list: if isVerifiedOwnerEmail();
+      allow update: if false;
+      allow delete: if isValidId(responseId) && isAdmin();
+    }
+
+    // 2. Admins: Verified owner only
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isAdmin() || (isSignedIn() && request.auth.uid == adminId));
+      allow list: if isVerifiedOwnerEmail();
+      allow create: if isValidId(adminId) && isVerifiedOwnerEmail() && isValidAdminUser(incoming());
+      allow update: if isValidId(adminId) && isVerifiedOwnerEmail() && isValidAdminUser(incoming()) && incoming().createdAt == existing().createdAt;
+      allow delete: if isValidId(adminId) && isVerifiedOwnerEmail();
+    }
+
+    // 3. Owner Settings (Google Forms configuration): Verified owner only
+    match /owner_settings/{settingId} {
+      allow get: if isValidId(settingId) && isAdmin();
+      allow list: if isVerifiedOwnerEmail();
+      allow create: if isValidId(settingId) && isAdmin() && isValidOwnerSettings(incoming());
+      allow update: if isValidId(settingId) && isAdmin() && isValidOwnerSettings(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['formId', 'formTitle', 'responderUri', 'updatedAt']);
+      allow delete: if isValidId(settingId) && isAdmin();
+    }
+  }
+}

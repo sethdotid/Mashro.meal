@@ -1,0 +1,213 @@
+{
+  "entities": {
+    "SurveyResponse": {
+      "title": "SurveyResponse",
+      "description": "Respon survei pengalaman dan kepuasan pelanggan MASHRO.",
+      "type": "object",
+      "properties": {
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp saat survei dikirim"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["web_survey"],
+          "maxLength": 32
+        },
+        "hasTasted": {
+          "type": "string",
+          "enum": ["Sudah pernah"],
+          "maxLength": 32
+        },
+        "activity": {
+          "type": "string",
+          "enum": ["Karyawan", "Mahasiswa", "Dosen/Staf", "Lainnya"],
+          "maxLength": 32
+        },
+        "activityOther": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "hasOrdered": {
+          "type": "string",
+          "enum": ["Ya, pernah memesan", "Tidak, hanya mencicipi"],
+          "maxLength": 40
+        },
+        "ratingCassava": { "type": "integer" },
+        "ratingChicken": { "type": "integer" },
+        "ratingPumpkinSauce": { "type": "integer" },
+        "ratingVegetables": { "type": "integer" },
+        "ratingAroma": { "type": "integer" },
+        "ratingTexture": { "type": "integer" },
+        "ratingVisual": { "type": "integer" },
+        "ratingFlavorCombo": { "type": "integer" },
+        "pickupTime": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Jam pengambilan / konsumsi dalam format HH:MM (24 jam WIB)"
+        },
+        "foodConditionOverall": {
+          "type": "string",
+          "enum": ["Masih enak", "Mulai menurun", "Sudah tidak enak"],
+          "maxLength": 48
+        },
+        "conditionCassava": {
+          "type": "string",
+          "enum": ["Masih enak", "Mulai sedikit asam", "Sudah asam"],
+          "maxLength": 48
+        },
+        "conditionChicken": {
+          "type": "string",
+          "enum": ["Masih empuk & enak", "Sedikit kering", "Alot"],
+          "maxLength": 48
+        },
+        "conditionVegetables": {
+          "type": "string",
+          "enum": ["Masih segar", "Agak layu", "Tidak segar"],
+          "maxLength": 48
+        },
+        "conditionSauce": {
+          "type": "string",
+          "enum": ["Masih pas & enak", "Mulai asin", "Terlalu asin / berubah rasa"],
+          "maxLength": 64
+        },
+        "ratingPortion": { "type": "integer" },
+        "ratingIngredientCombo": { "type": "integer" },
+        "satietyLevel": {
+          "type": "string",
+          "enum": ["Tidak mengenyangkan", "Cukup mengenyangkan", "Sangat mengenyangkan"],
+          "maxLength": 40
+        },
+        "ratingPackPracticality": { "type": "integer" },
+        "ratingPackStrength": { "type": "integer" },
+        "ratingLeakResistance": { "type": "integer" },
+        "ratingEaseOfOpening": { "type": "integer" },
+        "ratingEatingConvenience": { "type": "integer" },
+        "priceReasonable": {
+          "type": "string",
+          "enum": ["Sangat wajar", "Wajar", "Kurang wajar", "Tidak wajar"],
+          "maxLength": 32
+        },
+        "purchaseLikelihood": { "type": "integer" },
+        "purchaseFrequency": {
+          "type": "string",
+          "enum": [
+            "Beberapa kali seminggu",
+            "Sekali seminggu",
+            "2–3 kali sebulan",
+            "Sekali sebulan atau lebih jarang",
+            "Belum berminat"
+          ],
+          "maxLength": 64
+        },
+        "repurchaseIntention": {
+          "type": "string",
+          "enum": [
+            "Pasti akan membeli lagi",
+            "Kemungkinan besar akan membeli lagi",
+            "Ragu-ragu",
+            "Kemungkinan tidak membeli lagi"
+          ],
+          "maxLength": 64
+        },
+        "preOrderEase": { "type": "integer" },
+        "preOrderResponsiveness": { "type": "integer" },
+        "preOrderAccuracy": { "type": "integer" },
+        "preOrderPunctuality": { "type": "integer" },
+        "expressionMood": {
+          "type": "string",
+          "enum": ["Sangat Kecewa", "Kurang Puas", "Biasa Saja", "Senang", "Sangat Senang"],
+          "maxLength": 32
+        },
+        "overallSatisfaction": { "type": "integer" },
+        "recommendScore": { "type": "integer" },
+        "favoriteComponents": {
+          "type": "array",
+          "description": "Komponen produk favorit pelanggan (1-5 pilihan)"
+        },
+        "feedbackNotes": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "customAnswers": {
+          "type": "object",
+          "description": "Jawaban untuk pertanyaan pilihan ganda tambahan buatan pemilik"
+        }
+      },
+      "required": [
+        "createdAt",
+        "source",
+        "hasTasted",
+        "activity",
+        "hasOrdered",
+        "ratingCassava",
+        "ratingChicken",
+        "ratingPumpkinSauce",
+        "ratingVegetables",
+        "ratingAroma",
+        "ratingTexture",
+        "ratingVisual",
+        "ratingFlavorCombo",
+        "pickupTime",
+        "foodConditionOverall",
+        "conditionCassava",
+        "conditionChicken",
+        "conditionVegetables",
+        "conditionSauce",
+        "ratingPortion",
+        "ratingIngredientCombo",
+        "satietyLevel",
+        "ratingPackPracticality",
+        "ratingPackStrength",
+        "ratingLeakResistance",
+        "ratingEaseOfOpening",
+        "ratingEatingConvenience",
+        "priceReasonable",
+        "purchaseLikelihood",
+        "purchaseFrequency",
+        "repurchaseIntention",
+        "overallSatisfaction",
+        "recommendScore",
+        "favoriteComponents"
+      ]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Daftar pengguna admin / pemilik bisnis MASHRO yang berhak mengakses dashboard respons.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["owner", "admin"], "maxLength": 20 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "createdAt"]
+    },
+    "OwnerSettings": {
+      "title": "OwnerSettings",
+      "description": "Konfigurasi integrasi Google Forms milik pemilik MASHRO.",
+      "type": "object",
+      "properties": {
+        "formId": { "type": "string", "maxLength": 128 },
+        "formTitle": { "type": "string", "maxLength": 200 },
+        "responderUri": { "type": "string", "maxLength": 300 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["formId", "formTitle", "responderUri", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/survey_responses/{responseId}": {
+      "schema": { "$ref": "#/entities/SurveyResponse" },
+      "description": "Menyimpan respons survei pelanggan secara anonim. Publik hanya dapat membuat (create); hanya admin/pemilik yang dapat membaca atau menghapus."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Daftar UID admin yang memiliki akses ke dashboard manajemen respons."
+    },
+    "/owner_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/OwnerSettings" },
+      "description": "Menyimpan konfigurasi Google Forms yang ditautkan oleh pemilik MASHRO."
+    }
+  }
+}

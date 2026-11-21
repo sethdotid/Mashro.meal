@@ -1,0 +1,8 @@
+{
+  "name": "MASHRO — Survei Pengalaman dan Kepuasan Pelanggan",
+  "description": "Aplikasi survei kepuasan pelanggan dan dashboard manajemen respons untuk MASHRO healthy meal bowl.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
