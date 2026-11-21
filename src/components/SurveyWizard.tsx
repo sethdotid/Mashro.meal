@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   Ticket,
 } from 'lucide-react';
-import { EditableText, useSiteContent } from '../context/SiteContentContext';
+import { EditableControlWrap, EditableText, useSiteContent } from '../context/SiteContentContext';
 import { SiteContentConfig } from '../types/siteConfig';
 import {
   ACTIVITY_OPTIONS,
@@ -24,6 +24,7 @@ import {
   PACKAGING_RATING_ITEMS,
   PREORDER_ITEMS,
   PRICE_REASONABLE_OPTIONS,
+  PRICE_WORTH_IT_OPTIONS,
   PRODUCT_EXPERIENCE_ITEMS,
   PURCHASE_FREQUENCY_OPTIONS,
   REPURCHASE_INTENTION_OPTIONS,
@@ -35,6 +36,7 @@ import { submitSurveyResponse } from '../services/surveyService';
 import { playPageTransition, playSuccess, playTap } from '../utils/soundEngine';
 import { getVisibleSteps, validateStep } from '../utils/surveyLogic';
 import { BotanicalSprig, StarOrnament } from './BrandMotifs';
+import { ConfettiBurst } from './ConfettiBurst';
 import { ConstellationIndicator } from './ConstellationIndicator';
 import { ExpressionIndicator } from './ExpressionIndicator';
 import {
@@ -338,13 +340,21 @@ export function SurveyWizard({ onReturnHome }: SurveyWizardProps) {
             >
               Ubah Jawaban Saya
             </button>
-            <button
-              type="button"
-              onClick={onReturnHome}
-              className="w-full sm:w-auto min-h-[44px] px-7 py-2.5 rounded-full bg-[#173E2C] text-[#F7F1E3] text-sm font-semibold hover:bg-[#0F2B1E] transition-colors cursor-pointer whitespace-nowrap"
+            <EditableControlWrap
+              value={content.neverTastedHomeButtonLabel}
+              editLabel="Ubah teks tombol kembali halaman awal"
+              onSave={(next) =>
+                updateContent((prev) => ({ ...prev, neverTastedHomeButtonLabel: next }))
+              }
             >
-              Kembali ke Halaman Awal
-            </button>
+              <button
+                type="button"
+                onClick={onReturnHome}
+                className="w-full sm:w-auto min-h-[44px] px-7 py-2.5 rounded-full bg-[#173E2C] text-[#F7F1E3] text-sm font-semibold hover:bg-[#0F2B1E] transition-colors cursor-pointer whitespace-nowrap"
+              >
+                {content.neverTastedHomeButtonLabel}
+              </button>
+            </EditableControlWrap>
           </div>
         </div>
       </main>
@@ -353,27 +363,45 @@ export function SurveyWizard({ onReturnHome }: SurveyWizardProps) {
 
   if (outcome === 'thank_you') {
     return (
-      <main className="max-w-2xl mx-auto px-4 sm:px-6 py-12 sm:py-16">
-        <div className="mashro-page-enter bg-[#FCF9F2] border border-[#173E2C]/12 rounded-3xl p-8 sm:p-12 text-center shadow-sm">
-          <div className="flex justify-end mb-2">
+      <main className="max-w-2xl mx-auto px-4 sm:px-6 py-8 sm:py-14 relative">
+        <ConfettiBurst />
+        <div className="mashro-page-enter bg-[#FCF9F2] border border-[#173E2C]/15 rounded-3xl p-6 sm:p-10 text-center shadow-sm relative overflow-hidden">
+          <div className="flex items-center justify-between gap-3 mb-6">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#E5ECD9] border border-[#173E2C]/15 font-mono text-[11px] font-semibold text-[#173E2C]">
+              <Ticket className="w-3.5 h-3.5 text-[#D96B27]" aria-hidden="true" />
+              <span>ST-AKHIR · TUJUAN TERCAPAI</span>
+            </span>
             <SoundToggle compact />
           </div>
-          <div className="w-14 h-14 rounded-full bg-[#E5ECD9] text-[#173E2C] flex items-center justify-center mx-auto mb-5">
-            <CheckCircle2 className="w-7 h-7" aria-hidden="true" />
+
+          <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-[#E5ECD9] border border-[#173E2C]/15 flex items-center justify-center shadow-xs">
+            <CheckCircle2 className="w-8 h-8 text-[#D96B27]" aria-hidden="true" />
           </div>
-          <div className="flex items-center justify-center gap-2 text-xs font-semibold tracking-wider text-[#D6A23A] mb-3">
+
+          <div className="flex items-center justify-center gap-2 text-xs font-semibold tracking-wider text-[#D6A23A] mb-2.5">
             <StarOrnament className="w-3 h-3" />
             <span>{content.brandName}</span>
             <StarOrnament className="w-3 h-3" />
           </div>
-          <h1 className="font-editorial text-3xl sm:text-4xl font-semibold text-[#173E2C] mb-4 text-balance">
+
+          <p className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-[#E5ECD9]/75 border border-[#173E2C]/15 text-xs sm:text-sm font-semibold text-[#173E2C] mb-4">
+            <CheckCircle2 className="w-4 h-4 text-[#D96B27] shrink-0" aria-hidden="true" />
+            <EditableText
+              value={content.thankYouArrivalBadge}
+              editLabel="Ubah pesan tiba di tujuan akhir"
+              onSave={(next) => updateContent((prev) => ({ ...prev, thankYouArrivalBadge: next }))}
+            />
+          </p>
+
+          <h1 className="font-editorial text-2xl sm:text-3xl font-semibold text-[#173E2C] mb-2.5 text-balance">
             <EditableText
               value={content.thankYouTitle}
               editLabel="Ubah judul terima kasih"
               onSave={(next) => updateContent((prev) => ({ ...prev, thankYouTitle: next }))}
             />
           </h1>
-          <p className="text-base sm:text-lg text-[#173E2C]/85 leading-relaxed max-w-lg mx-auto mb-6">
+
+          <p className="text-sm sm:text-base text-[#173E2C]/85 leading-relaxed max-w-lg mx-auto mb-5">
             <EditableText
               value={content.thankYouBody}
               multiline
@@ -381,19 +409,29 @@ export function SurveyWizard({ onReturnHome }: SurveyWizardProps) {
               onSave={(next) => updateContent((prev) => ({ ...prev, thankYouBody: next }))}
             />
           </p>
+
           {submittedId && (
-            <p className="font-mono text-xs text-[#173E2C]/55 mb-8 tabular-nums">
+            <p className="font-mono text-xs text-[#173E2C]/60 mb-5 tabular-nums">
               Kode Referensi Tersimpan: {submittedId}
             </p>
           )}
+
           <div className="flex justify-center">
-            <button
-              type="button"
-              onClick={onReturnHome}
-              className="min-h-[46px] px-8 py-3 rounded-full bg-[#173E2C] text-[#F7F1E3] text-sm font-semibold hover:bg-[#0F2B1E] transition-colors cursor-pointer whitespace-nowrap"
+            <EditableControlWrap
+              value={content.thankYouHomeButtonLabel}
+              editLabel="Ubah teks tombol kembali beranda"
+              onSave={(next) =>
+                updateContent((prev) => ({ ...prev, thankYouHomeButtonLabel: next }))
+              }
             >
-              Kembali ke Beranda
-            </button>
+              <button
+                type="button"
+                onClick={onReturnHome}
+                className="min-h-[46px] px-8 py-3 rounded-full bg-[#173E2C] text-[#F7F1E3] text-sm font-semibold hover:bg-[#0F2B1E] transition-colors cursor-pointer whitespace-nowrap shadow-sm"
+              >
+                {content.thankYouHomeButtonLabel}
+              </button>
+            </EditableControlWrap>
           </div>
         </div>
       </main>
@@ -450,18 +488,41 @@ export function SurveyWizard({ onReturnHome }: SurveyWizardProps) {
         <aside className="hidden lg:block sticky top-20 bg-[#FCF9F2] border border-[#5C3D28]/20 rounded-3xl overflow-hidden shadow-xs">
           <div className="px-5 py-4 bg-[#173E2C] text-[#F7F1E3]">
             <div className="flex items-center justify-between text-[11px] font-mono text-[#D6A23A] mb-1">
-              <span>{content.brandName} TRANSIT PASS</span>
+              <span>
+                {content.brandName}{' '}
+                <EditableText
+                  value={content.boardingPassEyebrow}
+                  editLabel="Ubah label Transit Pass"
+                  onSave={(next) =>
+                    updateContent((prev) => ({ ...prev, boardingPassEyebrow: next }))
+                  }
+                />
+              </span>
               <span>MSH-01</span>
             </div>
             <p className="font-editorial text-xl font-semibold leading-tight">
-              Rute Survei Pelanggan
+              <EditableText
+                value={content.boardingPassTitle}
+                editLabel="Ubah judul Rute Survei"
+                onSave={(next) => updateContent((prev) => ({ ...prev, boardingPassTitle: next }))}
+              />
             </p>
           </div>
 
           <div className="ticket-perforation border-b border-dashed border-[#5C3D28]/25 px-5 py-3 bg-[#F7F1E3]/60 flex items-center justify-between text-[11px] font-mono text-[#5C3D28]">
-            <span>PENCICIP</span>
+            <EditableText
+              value={content.boardingPassOrigin}
+              editLabel="Ubah label asal rute"
+              onSave={(next) => updateContent((prev) => ({ ...prev, boardingPassOrigin: next }))}
+            />
             <span className="text-[#D96B27]">→</span>
-            <span>EVALUASI</span>
+            <EditableText
+              value={content.boardingPassDestination}
+              editLabel="Ubah label tujuan rute"
+              onSave={(next) =>
+                updateContent((prev) => ({ ...prev, boardingPassDestination: next }))
+              }
+            />
           </div>
 
           <div className="p-5">
@@ -471,12 +532,12 @@ export function SurveyWizard({ onReturnHome }: SurveyWizardProps) {
                 const isCompleted = idx < currentStepIndex;
                 const station = getStationCopy(step.id);
                 return (
-                  <li key={step.id}>
+                  <li key={step.id} className="flex items-center gap-1.5">
                     <button
                       type="button"
                       disabled={idx > currentStepIndex}
                       onClick={() => idx <= currentStepIndex && handleJumpToStep(step.id)}
-                      className={`w-full text-left px-3 py-2.5 rounded-xl text-sm flex items-center gap-3 transition-colors ${
+                      className={`flex-1 min-w-0 text-left px-3 py-2.5 rounded-xl text-sm flex items-center gap-3 transition-colors ${
                         isCurrent
                           ? 'bg-[#173E2C] text-[#F7F1E3] font-semibold shadow-xs'
                           : isCompleted
@@ -505,12 +566,35 @@ export function SurveyWizard({ onReturnHome }: SurveyWizardProps) {
                         </span>
                       </span>
                     </button>
+                    <EditableControlWrap
+                      value={station.stopName}
+                      editLabel={`Ubah nama stasiun ${station.stationCode}`}
+                      onSave={(next) =>
+                        updateContent((prev) => ({
+                          ...prev,
+                          steps: {
+                            ...prev.steps,
+                            [step.id]: {
+                              ...prev.steps[step.id],
+                              stopName: next,
+                            },
+                          },
+                        }))
+                      }
+                    >
+                      <span className="sr-only">{station.stopName}</span>
+                    </EditableControlWrap>
                   </li>
                 );
               })}
             </ol>
             <div className="mt-5 pt-4 border-t border-dashed border-[#5C3D28]/20 text-xs text-[#5C3D28]/75 leading-relaxed">
-              Jawaban Anda tersimpan sementara di tiket ini saat berpindah antar stasiun.
+              <EditableText
+                value={content.boardingPassNote}
+                multiline
+                editLabel="Ubah catatan Boarding Pass"
+                onSave={(next) => updateContent((prev) => ({ ...prev, boardingPassNote: next }))}
+              />
             </div>
           </div>
         </aside>
@@ -965,6 +1049,17 @@ export function SurveyWizard({ onReturnHome }: SurveyWizardProps) {
                 hasError={missingFields.includes('priceReasonable')}
               />
 
+              <RadioOptionGroup
+                id="priceWorthIt"
+                variant="destination"
+                label={content.questions.priceWorthItLabel}
+                labelNode={editableQuestionTitle('priceWorthItLabel', 'Ubah pertanyaan kesepadanan harga Rp. 20.000')}
+                options={PRICE_WORTH_IT_OPTIONS}
+                value={draft.priceWorthIt}
+                onChange={(val) => updateField('priceWorthIt', val)}
+                hasError={missingFields.includes('priceWorthIt')}
+              />
+
               <Scale1to5
                 id="purchaseLikelihood"
                 variant="destination"
@@ -1262,7 +1357,8 @@ export function SurveyWizard({ onReturnHome }: SurveyWizardProps) {
                       HARGA & MINAT PEMBELIAN
                     </p>
                     <p className="text-sm text-[#173E2C] leading-relaxed">
-                      <strong>Kewajaran Rp20rb–25rb:</strong> {draft.priceReasonable} ·{' '}
+                      <strong>Kewajaran Rp. 20.000:</strong> {draft.priceReasonable} ·{' '}
+                      <strong>Penilaian Harga:</strong> {draft.priceWorthIt} ·{' '}
                       <strong>Minat beli:</strong> {draft.purchaseLikelihood}/5 ·{' '}
                       <strong>Frekuensi:</strong> {draft.purchaseFrequency} ·{' '}
                       <strong>Beli lagi:</strong> {draft.repurchaseIntention}
@@ -1351,56 +1447,90 @@ export function SurveyWizard({ onReturnHome }: SurveyWizardProps) {
               {/* Privacy Notice */}
               <div className="p-4 rounded-2xl bg-[#E5ECD9]/60 border border-[#173E2C]/12 flex items-start gap-3 text-xs sm:text-sm text-[#173E2C]/85">
                 <ShieldCheck className="w-5 h-5 text-[#173E2C] shrink-0 mt-0.5" aria-hidden="true" />
-                <p className="leading-relaxed">
-                  <strong>Pemberitahuan Privasi:</strong> Respon dikumpulkan secara anonim tanpa
-                  data pribadi sensitif (tanpa nama lengkap, nomor telepon, atau alamat rumah)
-                  semata-mata untuk evaluasi kualitas sajian dan layanan {content.brandName}.
-                </p>
+                <div className="leading-relaxed space-y-0.5">
+                  <p className="font-semibold text-[#173E2C]">
+                    <EditableText
+                      value={content.reviewPrivacyTitle}
+                      editLabel="Ubah judul pemberitahuan privasi tinjauan"
+                      onSave={(next) =>
+                        updateContent((prev) => ({ ...prev, reviewPrivacyTitle: next }))
+                      }
+                    />
+                  </p>
+                  <p>
+                    <EditableText
+                      value={content.reviewPrivacyBody}
+                      multiline
+                      editLabel="Ubah isi pemberitahuan privasi tinjauan"
+                      onSave={(next) =>
+                        updateContent((prev) => ({ ...prev, reviewPrivacyBody: next }))
+                      }
+                    />
+                  </p>
+                </div>
               </div>
             </div>
           )}
           </div>
 
           {/* Footer Navigation Controls */}
-          <div className="mt-8 pt-6 border-t border-dashed border-[#5C3D28]/20 flex items-center justify-between gap-3 sm:gap-4">
-            <button
-              type="button"
-              onClick={handlePrevious}
-              disabled={isSubmitting}
-              className="min-h-[46px] px-4 sm:px-5 py-2.5 rounded-2xl border border-[#5C3D28]/25 bg-white text-[#173E2C] text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shrink-0 hover:bg-[#E5ECD9]/60 transition-colors cursor-pointer disabled:opacity-50"
+          <div className="mt-8 pt-6 border-t border-dashed border-[#5C3D28]/20 flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+            <EditableControlWrap
+              value={content.prevButtonLabel}
+              editLabel="Ubah teks tombol Sebelumnya"
+              onSave={(next) => updateContent((prev) => ({ ...prev, prevButtonLabel: next }))}
             >
-              <ArrowLeft className="w-4 h-4 text-[#5C3D28] shrink-0" aria-hidden="true" />
-              <span>Sebelumnya</span>
-            </button>
+              <button
+                type="button"
+                onClick={handlePrevious}
+                disabled={isSubmitting}
+                className="min-h-[46px] px-4 sm:px-5 py-2.5 rounded-2xl border border-[#5C3D28]/25 bg-white text-[#173E2C] text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shrink-0 hover:bg-[#E5ECD9]/60 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <ArrowLeft className="w-4 h-4 text-[#5C3D28] shrink-0" aria-hidden="true" />
+                <span>{content.prevButtonLabel}</span>
+              </button>
+            </EditableControlWrap>
 
             {currentStepId === 'review' ? (
-              <button
-                type="button"
-                onClick={handleSubmit}
-                disabled={isSubmitting}
-                className="min-h-[46px] px-5 sm:px-8 py-2.5 rounded-2xl bg-[#173E2C] text-[#F7F1E3] text-sm font-semibold inline-flex items-center gap-2 sm:gap-2.5 whitespace-nowrap shrink-0 hover:bg-[#0F2B1E] transition-colors shadow-sm cursor-pointer disabled:opacity-60"
+              <EditableControlWrap
+                value={content.submitButtonLabel}
+                editLabel="Ubah teks tombol Kirim Survei"
+                onSave={(next) => updateContent((prev) => ({ ...prev, submitButtonLabel: next }))}
               >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin text-[#D6A23A] shrink-0" aria-hidden="true" />
-                    <span>Mengirim Jawaban...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Kirim Survei</span>
-                    <CheckCircle2 className="w-4 h-4 text-[#D6A23A] shrink-0" aria-hidden="true" />
-                  </>
-                )}
-              </button>
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={isSubmitting}
+                  className="min-h-[46px] px-5 sm:px-8 py-2.5 rounded-2xl bg-[#173E2C] text-[#F7F1E3] text-sm font-semibold inline-flex items-center gap-2 sm:gap-2.5 whitespace-nowrap shrink-0 hover:bg-[#0F2B1E] transition-colors shadow-sm cursor-pointer disabled:opacity-60"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-[#D6A23A] shrink-0" aria-hidden="true" />
+                      <span>Mengirim Jawaban...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>{content.submitButtonLabel}</span>
+                      <CheckCircle2 className="w-4 h-4 text-[#D6A23A] shrink-0" aria-hidden="true" />
+                    </>
+                  )}
+                </button>
+              </EditableControlWrap>
             ) : (
-              <button
-                type="button"
-                onClick={handleNext}
-                className="min-h-[46px] px-5 sm:px-7 py-2.5 rounded-2xl bg-[#173E2C] text-[#F7F1E3] text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shrink-0 hover:bg-[#0F2B1E] transition-colors cursor-pointer"
+              <EditableControlWrap
+                value={content.nextButtonLabel}
+                editLabel="Ubah teks tombol Selanjutnya"
+                onSave={(next) => updateContent((prev) => ({ ...prev, nextButtonLabel: next }))}
               >
-                <span>Selanjutnya</span>
-                <ArrowRight className="w-4 h-4 text-[#D96B27] shrink-0" aria-hidden="true" />
-              </button>
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className="min-h-[46px] px-5 sm:px-7 py-2.5 rounded-2xl bg-[#173E2C] text-[#F7F1E3] text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shrink-0 hover:bg-[#0F2B1E] transition-colors cursor-pointer"
+                >
+                  <span>{content.nextButtonLabel}</span>
+                  <ArrowRight className="w-4 h-4 text-[#D96B27] shrink-0" aria-hidden="true" />
+                </button>
+              </EditableControlWrap>
             )}
           </div>
         </section>

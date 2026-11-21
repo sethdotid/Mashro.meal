@@ -123,7 +123,7 @@ export function OwnerDashboard({ onNavigateHome }: OwnerDashboardProps) {
         setFormIdInput(gform.formId || '');
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Gagal memuat data respons dari server.';
+      const msg = err instanceof Error ? err.message : 'Gagal memuat data respons dari Firebase Firestore.';
       setDataError(msg);
       if (msg.includes('Sesi admin tidak valid')) {
         logoutAdmin();
@@ -397,7 +397,7 @@ export function OwnerDashboard({ onNavigateHome }: OwnerDashboardProps) {
                 </button>
               </div>
               <p className="text-[11px] text-[#5C3D28]/70 mt-2">
-                Gunakan PIN admin Anda (bawaan: <code className="font-mono font-semibold text-[#173E2C]">MASHRO2026</code> apabila belum diatur di Secrets).
+                Gunakan PIN admin Anda (bawaan: <code className="font-mono font-semibold text-[#173E2C]">MASHRO2026</code>). Seluruh data &amp; editan tersimpan langsung di Firebase Firestore.
               </p>
             </div>
 
@@ -669,15 +669,31 @@ export function OwnerDashboard({ onNavigateHome }: OwnerDashboardProps) {
               <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-[#FCF9F2] border border-[#173E2C]/12 rounded-3xl p-6">
                   <h3 className="font-editorial text-2xl font-semibold text-[#173E2C] mb-4">
-                    Kewajaran Harga (Rp20rb–25rb) & Beli Ulang
+                    Harga (Rp. 20.000) & Minat Beli Ulang
                   </h3>
                   <div className="space-y-5">
                     <div>
                       <p className="text-xs font-semibold text-[#D6A23A] mb-2.5">
-                        PENILAIAN KEWAJARAN HARGA
+                        PENILAIAN KEWAJARAN HARGA RP. 20.000
                       </p>
                       <div className="space-y-2">
                         {stats.priceDistribution.map((d) => (
+                          <div key={d.label} className="flex items-center justify-between text-sm">
+                            <span className="text-[#173E2C]/85">{d.label}</span>
+                            <span className="font-mono text-xs text-[#173E2C] tabular-nums">
+                              {d.count} ({d.percentage}%)
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-[#173E2C]/10">
+                      <p className="text-xs font-semibold text-[#D6A23A] mb-2.5">
+                        KESEPADANAN HARGA RP. 20.000 (WORTH IT)
+                      </p>
+                      <div className="space-y-2">
+                        {stats.priceWorthItDistribution.map((d) => (
                           <div key={d.label} className="flex items-center justify-between text-sm">
                             <span className="text-[#173E2C]/85">{d.label}</span>
                             <span className="font-mono text-xs text-[#173E2C] tabular-nums">
@@ -860,7 +876,7 @@ export function OwnerDashboard({ onNavigateHome }: OwnerDashboardProps) {
                         <th className="py-3 px-3 font-semibold">Ekspresi</th>
                         <th className="py-3 px-3 font-semibold text-right">Kepuasan</th>
                         <th className="py-3 px-3 font-semibold text-right">Rekomendasi</th>
-                        <th className="py-3 px-3 font-semibold">Harga 20–25rb</th>
+                        <th className="py-3 px-3 font-semibold">Harga Rp. 20.000</th>
                         <th className="py-3 px-3 font-semibold">Saran / Masukan</th>
                         <th className="py-3 pl-3 text-right font-semibold">Aksi</th>
                       </tr>
@@ -898,7 +914,10 @@ export function OwnerDashboard({ onNavigateHome }: OwnerDashboardProps) {
                             {r.recommendScore}/10
                           </td>
                           <td className="py-3 px-3 text-xs text-[#173E2C]/80 whitespace-nowrap">
-                            {r.priceReasonable}
+                            <span className="block font-medium text-[#173E2C]">{r.priceReasonable}</span>
+                            {r.priceWorthIt && (
+                              <span className="block text-[11px] text-[#5C3D28]/80">{r.priceWorthIt}</span>
+                            )}
                           </td>
                           <td className="py-3 px-3 text-xs text-[#173E2C]/80 max-w-xs">
                             {r.feedbackNotes ? r.feedbackNotes : '—'}
@@ -1206,6 +1225,66 @@ export function OwnerDashboard({ onNavigateHome }: OwnerDashboardProps) {
                   className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-white border border-[#5C3D28]/20 text-sm text-[#173E2C]"
                 />
               </label>
+
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold text-[#173E2C]/80">Teks Tombol Mulai di Panel Privasi</span>
+                <input
+                  type="text"
+                  value={editorDraft.privacyCtaLabel}
+                  onChange={(e) => setEditorDraft((p) => ({ ...p, privacyCtaLabel: e.target.value }))}
+                  className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-white border border-[#5C3D28]/20 text-sm text-[#173E2C]"
+                />
+              </label>
+
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold text-[#173E2C]/80">Label Navigasi: Komposisi</span>
+                <input
+                  type="text"
+                  value={editorDraft.navCompositionLabel}
+                  onChange={(e) => setEditorDraft((p) => ({ ...p, navCompositionLabel: e.target.value }))}
+                  className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-white border border-[#5C3D28]/20 text-sm text-[#173E2C]"
+                />
+              </label>
+
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold text-[#173E2C]/80">Label Navigasi: Alur</span>
+                <input
+                  type="text"
+                  value={editorDraft.navFlowLabel}
+                  onChange={(e) => setEditorDraft((p) => ({ ...p, navFlowLabel: e.target.value }))}
+                  className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-white border border-[#5C3D28]/20 text-sm text-[#173E2C]"
+                />
+              </label>
+
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold text-[#173E2C]/80">Label Navigasi: Privasi</span>
+                <input
+                  type="text"
+                  value={editorDraft.navPrivacyLabel}
+                  onChange={(e) => setEditorDraft((p) => ({ ...p, navPrivacyLabel: e.target.value }))}
+                  className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-white border border-[#5C3D28]/20 text-sm text-[#173E2C]"
+                />
+              </label>
+
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold text-[#173E2C]/80">Judul Kartu Boarding Pass Survei</span>
+                <input
+                  type="text"
+                  value={editorDraft.boardingPassTitle}
+                  onChange={(e) => setEditorDraft((p) => ({ ...p, boardingPassTitle: e.target.value }))}
+                  className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-white border border-[#5C3D28]/20 text-sm text-[#173E2C]"
+                />
+              </label>
+
+              <label className="block space-y-1.5 md:col-span-2">
+                <span className="text-xs font-semibold text-[#173E2C]/80">Catatan Kartu Boarding Pass Survei</span>
+                <input
+                  type="text"
+                  value={editorDraft.boardingPassNote}
+                  onChange={(e) => setEditorDraft((p) => ({ ...p, boardingPassNote: e.target.value }))}
+                  className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-white border border-[#5C3D28]/20 text-sm text-[#173E2C]"
+                />
+              </label>
             </div>
 
             {/* 4 Komponen Sajian */}
@@ -1468,8 +1547,11 @@ export function OwnerDashboard({ onNavigateHome }: OwnerDashboardProps) {
               {(
                 [
                   { key: 'satietyLabel', label: 'Pertanyaan Tingkat Rasa Kenyang' },
-                  { key: 'priceBannerAmount', label: 'Rentang Harga Usulan' },
-                  { key: 'priceReasonableLabel', label: 'Pertanyaan Kewajaran Harga' },
+                  { key: 'priceBannerTitle', label: 'Judul Banner Harga Tetap' },
+                  { key: 'priceBannerAmount', label: 'Nominal Harga Resmi (Rp. 20.000)' },
+                  { key: 'priceBannerNote', label: 'Keterangan Banner Harga' },
+                  { key: 'priceReasonableLabel', label: 'Pertanyaan Kewajaran Harga Rp. 20.000' },
+                  { key: 'priceWorthItLabel', label: 'Pertanyaan Kesepadanan Harga (Worth It)' },
                   { key: 'purchaseLikelihoodLabel', label: 'Pertanyaan Minat Membeli' },
                   { key: 'purchaseFrequencyLabel', label: 'Pertanyaan Frekuensi Pembelian' },
                   { key: 'repurchaseIntentionLabel', label: 'Pertanyaan Minat Beli Ulang' },
@@ -1496,6 +1578,20 @@ export function OwnerDashboard({ onNavigateHome }: OwnerDashboardProps) {
                 </label>
               ))}
 
+              <label className="block space-y-1.5 md:col-span-2">
+                <span className="text-xs font-semibold text-[#173E2C]/80">
+                  Pesan Kedatangan Tujuan Akhir (Halaman Terima Kasih)
+                </span>
+                <input
+                  type="text"
+                  value={editorDraft.thankYouArrivalBadge}
+                  onChange={(e) =>
+                    setEditorDraft((p) => ({ ...p, thankYouArrivalBadge: e.target.value }))
+                  }
+                  className="w-full min-h-[40px] px-3 py-2 rounded-xl bg-white border border-[#5C3D28]/20 text-sm text-[#173E2C]"
+                />
+              </label>
+
               <label className="block space-y-1.5">
                 <span className="text-xs font-semibold text-[#173E2C]/80">
                   Judul Halaman Terima Kasih
@@ -1505,6 +1601,20 @@ export function OwnerDashboard({ onNavigateHome }: OwnerDashboardProps) {
                   value={editorDraft.thankYouTitle}
                   onChange={(e) =>
                     setEditorDraft((p) => ({ ...p, thankYouTitle: e.target.value }))
+                  }
+                  className="w-full min-h-[40px] px-3 py-2 rounded-xl bg-white border border-[#5C3D28]/20 text-sm text-[#173E2C]"
+                />
+              </label>
+
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold text-[#173E2C]/80">
+                  Teks Tombol Kembali (Terima Kasih)
+                </span>
+                <input
+                  type="text"
+                  value={editorDraft.thankYouHomeButtonLabel}
+                  onChange={(e) =>
+                    setEditorDraft((p) => ({ ...p, thankYouHomeButtonLabel: e.target.value }))
                   }
                   className="w-full min-h-[40px] px-3 py-2 rounded-xl bg-white border border-[#5C3D28]/20 text-sm text-[#173E2C]"
                 />
@@ -1945,16 +2055,16 @@ export function OwnerDashboard({ onNavigateHome }: OwnerDashboardProps) {
         title={cropTarget === 'hero' ? 'Crop Foto Sajian Utama (Hero)' : 'Crop Foto Komposisi Bahan'}
         initialAspect={4 / 3}
         onClose={() => setCropTarget(null)}
-        onApply={(croppedDataUrl) => {
+        onApply={async (croppedDataUrl) => {
           const target = cropTarget;
           if (!target) return;
           const next =
             target === 'hero'
               ? { ...editorDraft, heroImageUrl: croppedDataUrl }
               : { ...editorDraft, compositionImageUrl: croppedDataUrl };
+          await updateContent(() => mergeSiteContent(next));
           setEditorDraft(next);
-          void updateContent(() => mergeSiteContent(next));
-          setEditorSuccess('Foto berhasil di-crop dan langsung diperbarui.');
+          setEditorSuccess('Foto berhasil di-crop dan langsung tersimpan permanen.');
         }}
       />
 

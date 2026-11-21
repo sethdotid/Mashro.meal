@@ -6,7 +6,7 @@ export interface ImageCropperModalProps {
   title: string;
   initialAspect?: number; // e.g., 4 / 3
   onClose: () => void;
-  onApply: (croppedDataUrl: string) => void;
+  onApply: (croppedDataUrl: string) => Promise<void> | void;
 }
 
 const ASPECT_OPTIONS: { label: string; value: number }[] = [
@@ -34,11 +34,13 @@ export function ImageCropperModal({
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef<{ x: number; y: number; origX: number; origY: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isApplying, setIsApplying] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setErrorMsg(null);
       setIsDragging(false);
+      setIsApplying(false);
     }
   }, [open]);
 
@@ -135,21 +137,18 @@ export function ImageCropperModal({
     dragStartRef.current = null;
   };
 
-  const handleConfirmCrop = () => {
-    const img = imageRef.current;
-    if (!img || !imageSrc) {
-      setErrorMsg('Unggah gambar terlebih dahulu sebelum menerapkan crop.');
-      return;
-    }
-
-    const outWidth = 960;
+  const renderCroppedJpeg = (
+    img: HTMLImageElement,
+    outWidth: number,
+    quality: number
+  ): string => {
     const outHeight = Math.round(outWidth / aspect);
     const exportCanvas = document.createElement('canvas');
     exportCanvas.width = outWidth;
     exportCanvas.height = outHeight;
 
     const ctx = exportCanvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) return '';
 
     ctx.fillStyle = '#F7F1E3';
     ctx.fillRect(0, 0, outWidth, outHeight);
@@ -170,9 +169,45 @@ export function ImageCropperModal({
     ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
     ctx.restore();
 
-    const dataUrl = exportCanvas.toDataURL('image/jpeg', 0.85);
-    onApply(dataUrl);
-    onClose();
+    return exportCanvas.toDataURL('image/jpeg', quality);
+  };
+
+  const handleConfirmCrop = async () => {
+    const img = imageRef.current;
+    if (!img || !imageSrc) {
+      setErrorMsg('Unggah gambar terlebih dahulu sebelum menerapkan crop.');
+      return;
+    }
+
+    const candidates: [number, number][] = [
+      [800, 0.78],
+      [800, 0.66],
+      [720, 0.58],
+      [600, 0.52],
+    ];
+    let dataUrl = '';
+    for (const [w, q] of candidates) {
+      dataUrl = renderCroppedJpeg(img, w, q);
+      if (dataUrl && dataUrl.length <= 480_000) break;
+    }
+
+    if (!dataUrl || dataUrl.length > 720_000) {
+      setErrorMsg('Ukuran gambar masih terlalu besar untuk disimpan. Pilih gambar lain.');
+      return;
+    }
+
+    setIsApplying(true);
+    setErrorMsg(null);
+    try {
+      await onApply(dataUrl);
+      onClose();
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Gagal menyimpan gambar hasil crop. Silakan coba lagi.'
+      );
+    } finally {
+      setIsApplying(false);
+    }
   };
 
   if (!open) return null;
@@ -321,19 +356,20 @@ export function ImageCropperModal({
         <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#5C3D28]/15">
           <button
             type="button"
+            disabled={isApplying}
             onClick={onClose}
-            className="min-h-[44px] px-5 py-2 rounded-full border border-[#173E2C]/25 text-[#173E2C] text-sm font-semibold hover:bg-[#E5ECD9]/60 cursor-pointer"
+            className="min-h-[44px] px-5 py-2 rounded-full border border-[#173E2C]/25 text-[#173E2C] text-sm font-semibold hover:bg-[#E5ECD9]/60 cursor-pointer disabled:opacity-50"
           >
             Batal
           </button>
           <button
             type="button"
-            onClick={handleConfirmCrop}
-            disabled={!imageSrc}
+            onClick={() => void handleConfirmCrop()}
+            disabled={!imageSrc || isApplying}
             className="min-h-[44px] px-6 py-2 rounded-full bg-[#173E2C] text-[#F7F1E3] text-sm font-semibold inline-flex items-center gap-2 hover:bg-[#0F2B1E] cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
           >
             <Check className="w-4 h-4 text-[#D6A23A]" aria-hidden="true" />
-            <span>Simpan Hasil Crop</span>
+            <span>{isApplying ? 'Menyimpan Gambar...' : 'Simpan Hasil Crop'}</span>
           </button>
         </div>
       </div>

@@ -44,6 +44,7 @@ function makeCompleteDraft(overrides: Partial<SurveyDraft> = {}): SurveyDraft {
     ratingEaseOfOpening: 4,
     ratingEatingConvenience: 5,
     priceReasonable: 'Wajar',
+    priceWorthIt: 'Worth it',
     purchaseLikelihood: 4,
     purchaseFrequency: 'Sekali seminggu',
     repurchaseIntention: 'Kemungkinan besar akan membeli lagi',
@@ -105,6 +106,10 @@ test('validateStep enforces condition clock, 5 food conditions, and custom MCQ q
   assert.equal(missingCustom.valid, false);
   assert.ok(missingCustom.missingFields.includes('custom:q_custom_1'));
 
+  const missingPricing = validateStep('pricing', makeCompleteDraft({ priceWorthIt: null }));
+  assert.equal(missingPricing.valid, false);
+  assert.ok(missingPricing.missingFields.includes('priceWorthIt'));
+
   const validCustom = validateStep(
     'overall',
     makeCompleteDraft({ customAnswers: { q_custom_1: 'Siang' } }),
@@ -113,7 +118,7 @@ test('validateStep enforces condition clock, 5 food conditions, and custom MCQ q
   assert.equal(validCustom.valid, true);
 });
 
-test('buildFirestorePayload preserves pickupTime, conditions, and customAnswers while stripping empty optionals', () => {
+test('buildFirestorePayload preserves pickupTime, conditions, priceWorthIt, and customAnswers while stripping empty optionals', () => {
   const draft = makeCompleteDraft({
     hasOrdered: 'Tidak, hanya mencicipi',
     preOrderEase: 5,
@@ -124,6 +129,7 @@ test('buildFirestorePayload preserves pickupTime, conditions, and customAnswers 
   assert.equal('preOrderEase' in payload, false);
   assert.equal('feedbackNotes' in payload, false);
   assert.equal(payload.pickupTime, '13:30');
+  assert.equal(payload.priceWorthIt, 'Worth it');
   assert.equal(payload.conditionCassava, 'Masih enak');
   assert.deepEqual(payload.customAnswers, { q_fav_time: 'Makan Siang' });
 });
@@ -159,6 +165,7 @@ test('computeDashboardStats aggregates food conditions and builds CSV columns cl
     ratingEaseOfOpening: 4,
     ratingEatingConvenience: 5,
     priceReasonable: 'Sangat wajar',
+    priceWorthIt: 'Worth it',
     purchaseLikelihood: 5,
     purchaseFrequency: 'Sekali seminggu',
     repurchaseIntention: 'Pasti akan membeli lagi',
@@ -176,6 +183,11 @@ test('computeDashboardStats aggregates food conditions and builds CSV columns cl
 
   const stats = computeDashboardStats([r1]);
   assert.equal(stats.totalResponses, 1);
+  assert.equal(stats.priceWorthItPct, 100);
+  assert.equal(
+    stats.priceWorthItDistribution.find((d) => d.label === 'Worth it')?.count,
+    1
+  );
   assert.equal(
     stats.conditionSauceDistribution.find((d) => d.label === 'Mulai asin')?.count,
     1
@@ -194,11 +206,13 @@ test('computeDashboardStats aggregates food conditions and builds CSV columns cl
     createdAtMs: r1.createdAtMs + 86_400_000,
     pickupTime: '19:30',
     foodConditionOverall: 'Mulai menurun',
+    priceWorthIt: 'Masih bisa lebih murah',
     overallSatisfaction: 3,
     recommendScore: 7,
   };
   const multiStats = computeDashboardStats([r2, r1]);
   assert.equal(multiStats.dailyTrend.length, 2);
+  assert.equal(multiStats.priceWorthItPct, 50);
   assert.ok(multiStats.dailyTrend[0].dateKey < multiStats.dailyTrend[1].dateKey);
   assert.equal(multiStats.pickupPeriodTrend.find((p) => p.periodId === 'malam')?.freshPct, 0);
 
@@ -212,6 +226,9 @@ test('computeDashboardStats aggregates food conditions and builds CSV columns cl
     },
   ]);
   assert.ok(csv.includes('Jam Konsumsi (WIB)'));
+  assert.ok(csv.includes('Kewajaran Harga (Rp. 20.000)'));
+  assert.ok(csv.includes('Nilai Harga Rp. 20.000 (Worth It)'));
+  assert.ok(csv.includes('Worth it'));
   assert.ok(csv.includes('Waktu Favorit'));
   assert.ok(csv.includes('13:30'));
   assert.ok(csv.includes('Siang'));

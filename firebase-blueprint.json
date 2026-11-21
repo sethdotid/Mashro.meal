@@ -89,6 +89,15 @@
           "enum": ["Sangat wajar", "Wajar", "Kurang wajar", "Tidak wajar"],
           "maxLength": 32
         },
+        "priceWorthIt": {
+          "type": "string",
+          "enum": [
+            "Worth it",
+            "Masih bisa lebih murah",
+            "Seharusnya bisa lebih baik harganya"
+          ],
+          "maxLength": 64
+        },
         "purchaseLikelihood": { "type": "integer" },
         "purchaseFrequency": {
           "type": "string",
@@ -164,6 +173,7 @@
         "ratingEaseOfOpening",
         "ratingEatingConvenience",
         "priceReasonable",
+        "priceWorthIt",
         "purchaseLikelihood",
         "purchaseFrequency",
         "repurchaseIntention",
@@ -171,6 +181,29 @@
         "recommendScore",
         "favoriteComponents"
       ]
+    },
+    "VaultSiteConfigMain": {
+      "title": "VaultSiteConfigMain",
+      "description": "Konfigurasi teks editorial, pertanyaan, dan daftar pertanyaan tambahan yang tersimpan permanen di Firestore.",
+      "type": "object",
+      "properties": {
+        "schemaVersion": { "type": "integer" },
+        "content": { "type": "object" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["schemaVersion", "content", "updatedAt"]
+    },
+    "VaultSiteImage": {
+      "title": "VaultSiteImage",
+      "description": "Gambar ter-crop milik situs MASHRO yang dipisah per dokumen agar tetap aman di bawah batas 1MB Firestore.",
+      "type": "object",
+      "properties": {
+        "schemaVersion": { "type": "integer" },
+        "imageUrl": { "type": "string", "maxLength": 750000 },
+        "imageAlt": { "type": "string", "maxLength": 300 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["schemaVersion", "imageUrl", "imageAlt", "updatedAt"]
     },
     "AdminUser": {
       "title": "AdminUser",
@@ -188,9 +221,10 @@
       "description": "Konfigurasi integrasi Google Forms milik pemilik MASHRO.",
       "type": "object",
       "properties": {
+        "schemaVersion": { "type": "integer" },
         "formId": { "type": "string", "maxLength": 128 },
         "formTitle": { "type": "string", "maxLength": 200 },
-        "responderUri": { "type": "string", "maxLength": 300 },
+        "responderUri": { "type": "string", "maxLength": 400 },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["formId", "formTitle", "responderUri", "updatedAt"]
@@ -199,7 +233,15 @@
   "firestore": {
     "/survey_responses/{responseId}": {
       "schema": { "$ref": "#/entities/SurveyResponse" },
-      "description": "Menyimpan respons survei pelanggan secara anonim. Publik hanya dapat membuat (create); hanya admin/pemilik yang dapat membaca atau menghapus."
+      "description": "Menyimpan respons survei pelanggan secara anonim. Publik hanya dapat membuat (create); hanya pemilik terverifikasi yang dapat membaca atau menghapus."
+    },
+    "/owner_vault/{vaultId}/responses/{responseId}": {
+      "schema": { "$ref": "#/entities/SurveyResponse" },
+      "description": "Brankas permanen respons survei MASHRO langsung di Firebase Firestore (tanpa Google Cloud backend) dengan autentikasi PIN Admin di klien."
+    },
+    "/owner_vault/{vaultId}/site_config/{configId}": {
+      "schema": { "$ref": "#/entities/VaultSiteConfigMain" },
+      "description": "Penyimpanan permanen teks beranda, pertanyaan survei, pertanyaan pilihan ganda tambahan, gambar ter-crop, dan tautan Google Form."
     },
     "/admins/{adminId}": {
       "schema": { "$ref": "#/entities/AdminUser" },

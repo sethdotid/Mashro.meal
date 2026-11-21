@@ -158,7 +158,11 @@ export function WallClockPicker({
             aria-label={`Jam Dinding Analog Interaktif, saat ini menunjukkan pukul ${value ?? 'belum dipilih'} WIB`}
             onPointerDown={(e) => {
               draggingRef.current = true;
-              (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+              try {
+                (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+              } catch {
+                // Ignore synthetic or non-captured pointer events
+              }
               applyPointerToDial(e.clientX, e.clientY, false);
             }}
             onPointerMove={(e) => {

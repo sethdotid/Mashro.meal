@@ -193,7 +193,8 @@ export function buildExcelWorkbookBytes(
     ['Rata-rata Kepuasan Total (1–5)', stats.avgOverallSatisfaction ?? '-', 'Skala kepuasan 1.0 – 5.0'],
     ['Rata-rata Skor Rekomendasi (0–10)', stats.avgRecommendScore ?? '-', 'Skala rekomendasi 0.0 – 10.0'],
     ['NPS Bersih', stats.npsNetScore ?? '-', 'Promotor minus Detraktor (%)'],
-    ['Penerimaan Harga (Rp20rb–25rb)', `${stats.priceAcceptancePct ?? 0}%`, 'Wajar / Sangat wajar'],
+    ['Penerimaan Harga (Rp. 20.000)', `${stats.priceAcceptancePct ?? 0}%`, 'Wajar / Sangat wajar'],
+    ['Menilai Harga Rp. 20.000 Worth It', `${stats.priceWorthItPct ?? 0}%`, 'Sepadan dengan kualitas & porsi'],
     ['Minat Beli Ulang Positif', `${stats.positiveRepurchasePct ?? 0}%`, 'Pasti / Kemungkinan besar'],
     ['', '', ''],
     ['Atribut Penilaian', 'Rata-rata (1–5)', 'Jumlah Penilai (n)'],
@@ -229,7 +230,8 @@ export function buildExcelWorkbookBytes(
     'Ketahanan Bocor',
     'Kemudahan Buka',
     'Kenyamanan Makan',
-    'Kewajaran Harga (20-25rb)',
+    'Kewajaran Harga (Rp. 20.000)',
+    'Nilai Harga Rp. 20.000 (Worth It)',
     'Minat Beli (1-5)',
     'Frekuensi Pembelian',
     'Minat Beli Ulang',
@@ -276,6 +278,7 @@ export function buildExcelWorkbookBytes(
       r.ratingEaseOfOpening,
       r.ratingEatingConvenience,
       r.priceReasonable,
+      r.priceWorthIt ?? '',
       r.purchaseLikelihood,
       r.purchaseFrequency,
       r.repurchaseIntention,
@@ -316,7 +319,7 @@ export function buildExcelWorkbookBytes(
   const sheet1Xml = buildWorksheetXml(summaryRows, [36, 18, 34]);
   const sheet2Xml = buildWorksheetXml(
     responseRows,
-    baseHeaders.map((_, idx) => (idx === 39 ? 36 : idx === 1 ? 22 : 18))
+    baseHeaders.map((_, idx) => (idx === 40 ? 36 : idx === 1 ? 22 : 18))
   );
   const sheet3Xml = buildWorksheetXml(trendRows, [24, 18, 22, 24, 24]);
 

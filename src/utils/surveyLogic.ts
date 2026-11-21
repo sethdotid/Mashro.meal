@@ -11,9 +11,11 @@ import {
   PACKAGING_RATING_ITEMS,
   PREORDER_ITEMS,
   PRICE_REASONABLE_OPTIONS,
+  PRICE_WORTH_IT_OPTIONS,
   PRODUCT_EXPERIENCE_ITEMS,
   PURCHASE_FREQUENCY_OPTIONS,
   PriceReasonableOption,
+  PriceWorthItOption,
   PurchaseFrequencyOption,
   REPURCHASE_INTENTION_OPTIONS,
   RepurchaseIntentionOption,
@@ -138,7 +140,11 @@ export function validateStep(
   if (stepId === 'pricing') {
     if (!draft.priceReasonable) {
       missingFields.push('priceReasonable');
-      errors.push('Pilih pendapat Anda mengenai kewajaran kisaran harga Rp20.000–Rp25.000.');
+      errors.push('Pilih pendapat Anda mengenai kewajaran harga Rp. 20.000.');
+    }
+    if (!draft.priceWorthIt) {
+      missingFields.push('priceWorthIt');
+      errors.push('Pilih penilaian kesepadanan harga Rp. 20.000 (Worth it atau perlu penyesuaian).');
     }
     if (!isValid1to5(draft.purchaseLikelihood)) {
       missingFields.push('purchaseLikelihood');
@@ -258,6 +264,7 @@ export function buildFirestorePayload(
     ratingEaseOfOpening: draft.ratingEaseOfOpening!,
     ratingEatingConvenience: draft.ratingEatingConvenience!,
     priceReasonable: draft.priceReasonable!,
+    priceWorthIt: draft.priceWorthIt!,
     purchaseLikelihood: draft.purchaseLikelihood!,
     purchaseFrequency: draft.purchaseFrequency!,
     repurchaseIntention: draft.repurchaseIntention!,
@@ -343,12 +350,14 @@ export interface DashboardAnalytics {
   avgRecommendScore: number | null;
   npsNetScore: number | null;
   priceAcceptancePct: number | null;
+  priceWorthItPct: number | null;
   avgPurchaseLikelihood: number | null;
   positiveRepurchasePct: number | null;
   categoryAverages: CategoryScoreSummary[];
   overallSatisfactionDistribution: DistributionItem[];
   attributeAverages: AttributeAverage[];
   priceDistribution: DistributionItem[];
+  priceWorthItDistribution: DistributionItem[];
   repurchaseDistribution: DistributionItem[];
   frequencyDistribution: DistributionItem[];
   satietyDistribution: DistributionItem[];
@@ -400,12 +409,14 @@ export function computeDashboardStats(responses: StoredSurveyResponse[]): Dashbo
       avgRecommendScore: null,
       npsNetScore: null,
       priceAcceptancePct: null,
+      priceWorthItPct: null,
       avgPurchaseLikelihood: null,
       positiveRepurchasePct: null,
       categoryAverages: [],
       overallSatisfactionDistribution: [],
       attributeAverages: [],
       priceDistribution: [],
+      priceWorthItDistribution: [],
       repurchaseDistribution: [],
       frequencyDistribution: [],
       satietyDistribution: [],
@@ -436,6 +447,11 @@ export function computeDashboardStats(responses: StoredSurveyResponse[]): Dashbo
     (r) => r.priceReasonable === 'Sangat wajar' || r.priceReasonable === 'Wajar'
   ).length;
   const priceAcceptancePct = Math.round((reasonableCount / total) * 100);
+
+  const withWorthIt = responses.filter((r) => Boolean(r.priceWorthIt));
+  const worthItCount = withWorthIt.filter((r) => r.priceWorthIt === 'Worth it').length;
+  const priceWorthItPct =
+    withWorthIt.length > 0 ? Math.round((worthItCount / withWorthIt.length) * 100) : null;
 
   const positiveRepurchaseCount = responses.filter(
     (r) =>
@@ -489,6 +505,7 @@ export function computeDashboardStats(responses: StoredSurveyResponse[]): Dashbo
   }
 
   const priceCounts = new Map<string, number>();
+  const priceWorthItCounts = new Map<string, number>();
   const repurchaseCounts = new Map<string, number>();
   const frequencyCounts = new Map<string, number>();
   const satietyCounts = new Map<string, number>();
@@ -503,6 +520,9 @@ export function computeDashboardStats(responses: StoredSurveyResponse[]): Dashbo
 
   for (const r of responses) {
     priceCounts.set(r.priceReasonable, (priceCounts.get(r.priceReasonable) ?? 0) + 1);
+    if (r.priceWorthIt) {
+      priceWorthItCounts.set(r.priceWorthIt, (priceWorthItCounts.get(r.priceWorthIt) ?? 0) + 1);
+    }
     repurchaseCounts.set(r.repurchaseIntention, (repurchaseCounts.get(r.repurchaseIntention) ?? 0) + 1);
     frequencyCounts.set(r.purchaseFrequency, (frequencyCounts.get(r.purchaseFrequency) ?? 0) + 1);
     satietyCounts.set(r.satietyLevel, (satietyCounts.get(r.satietyLevel) ?? 0) + 1);
@@ -602,12 +622,18 @@ export function computeDashboardStats(responses: StoredSurveyResponse[]): Dashbo
     avgRecommendScore,
     npsNetScore,
     priceAcceptancePct,
+    priceWorthItPct,
     avgPurchaseLikelihood,
     positiveRepurchasePct,
     categoryAverages,
     overallSatisfactionDistribution,
     attributeAverages,
     priceDistribution: buildDistribution(priceCounts, PRICE_REASONABLE_OPTIONS as PriceReasonableOption[], total),
+    priceWorthItDistribution: buildDistribution(
+      priceWorthItCounts,
+      PRICE_WORTH_IT_OPTIONS.map((o) => o.value) as PriceWorthItOption[],
+      withWorthIt.length
+    ),
     repurchaseDistribution: buildDistribution(
       repurchaseCounts,
       REPURCHASE_INTENTION_OPTIONS as RepurchaseIntentionOption[],
@@ -776,7 +802,8 @@ export function buildCsvContent(
     'Ketahanan Bocor',
     'Kemudahan Buka',
     'Kenyamanan Makan',
-    'Kewajaran Harga (20-25rb)',
+    'Kewajaran Harga (Rp. 20.000)',
+    'Nilai Harga Rp. 20.000 (Worth It)',
     'Minat Beli (1-5)',
     'Frekuensi Pembelian',
     'Minat Beli Ulang',
@@ -823,6 +850,7 @@ export function buildCsvContent(
     r.ratingEaseOfOpening,
     r.ratingEatingConvenience,
     r.priceReasonable,
+    r.priceWorthIt ?? '',
     r.purchaseLikelihood,
     r.purchaseFrequency,
     r.repurchaseIntention,

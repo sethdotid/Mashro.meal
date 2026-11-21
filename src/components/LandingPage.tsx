@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowRight, Clock, Crop, ShieldCheck } from 'lucide-react';
-import { EditableText, useSiteContent } from '../context/SiteContentContext';
+import { EditableControlWrap, EditableText, useSiteContent } from '../context/SiteContentContext';
 import { BotanicalSprig, ImageWithFallback, StarOrnament } from './BrandMotifs';
 import { ImageCropperModal } from './ImageCropperModal';
 import { SoundToggle } from './SoundToggle';
@@ -90,14 +90,20 @@ export function LandingPage({ onStartSurvey }: LandingPageProps) {
 
             <div className="flex flex-col sm:flex-row sm:items-center gap-4">
               <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={onStartSurvey}
-                  className="w-full sm:w-auto min-h-[48px] px-8 py-3.5 rounded-2xl bg-[#173E2C] text-[#F7F1E3] text-base font-semibold inline-flex items-center justify-center gap-3 hover:bg-[#0F2B1E] transition-colors shadow-sm cursor-pointer whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#173E2C]"
+                <EditableControlWrap
+                  value={content.heroCtaLabel}
+                  editLabel="Ubah teks tombol Mulai Survei"
+                  onSave={(next) => updateContent((prev) => ({ ...prev, heroCtaLabel: next }))}
                 >
-                  <span>{content.heroCtaLabel}</span>
-                  <ArrowRight className="w-4 h-4 text-[#D96B27] shrink-0" aria-hidden="true" />
-                </button>
+                  <button
+                    type="button"
+                    onClick={onStartSurvey}
+                    className="w-full sm:w-auto min-h-[48px] px-8 py-3.5 rounded-2xl bg-[#173E2C] text-[#F7F1E3] text-base font-semibold inline-flex items-center justify-center gap-3 hover:bg-[#0F2B1E] transition-colors shadow-sm cursor-pointer whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#173E2C]"
+                  >
+                    <span>{content.heroCtaLabel}</span>
+                    <ArrowRight className="w-4 h-4 text-[#D96B27] shrink-0" aria-hidden="true" />
+                  </button>
+                </EditableControlWrap>
               </div>
               <span className="text-xs text-[#5C3D28]/75">
                 <EditableText
@@ -316,13 +322,19 @@ export function LandingPage({ onStartSurvey }: LandingPageProps) {
               />
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onStartSurvey}
-            className="min-h-[44px] px-6 py-2.5 rounded-2xl bg-[#173E2C] text-[#F7F1E3] text-sm font-semibold hover:bg-[#0F2B1E] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          <EditableControlWrap
+            value={content.privacyCtaLabel}
+            editLabel="Ubah teks tombol Mulai Survei Sekarang"
+            onSave={(next) => updateContent((prev) => ({ ...prev, privacyCtaLabel: next }))}
           >
-            {content.privacyCtaLabel}
-          </button>
+            <button
+              type="button"
+              onClick={onStartSurvey}
+              className="min-h-[44px] px-6 py-2.5 rounded-2xl bg-[#173E2C] text-[#F7F1E3] text-sm font-semibold hover:bg-[#0F2B1E] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              {content.privacyCtaLabel}
+            </button>
+          </EditableControlWrap>
         </div>
       </section>
 
@@ -331,10 +343,10 @@ export function LandingPage({ onStartSurvey }: LandingPageProps) {
         title={cropTarget === 'hero' ? 'Foto Sajian Utama (Hero)' : 'Foto Komposisi Bahan'}
         initialAspect={4 / 3}
         onClose={() => setCropTarget(null)}
-        onApply={(croppedDataUrl) => {
+        onApply={async (croppedDataUrl) => {
           const target = cropTarget;
           if (!target) return;
-          void updateContent((prev) =>
+          await updateContent((prev) =>
             target === 'hero'
               ? { ...prev, heroImageUrl: croppedDataUrl }
               : { ...prev, compositionImageUrl: croppedDataUrl }

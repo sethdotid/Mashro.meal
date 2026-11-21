@@ -299,14 +299,14 @@ export function buildMashroFormBatchRequests(): {
   requests.push(
     makeSectionBreakItem(
       'Bagian 4: Harga & Minat Pembelian',
-      'Kisaran harga usulan untuk satu porsi MASHRO adalah Rp20.000–Rp25.000 (kisaran evaluasi produk, belum merupakan harga jual final).',
+      'Harga resmi untuk satu mangkuk sajian MASHRO ditetapkan sebesar Rp. 20.000 per mangkuk.',
       idx++
     )
   );
 
   requests.push(
     makeChoiceItem(
-      'Menurut Anda, apakah kisaran harga usulan Rp20.000–Rp25.000 wajar untuk sajian MASHRO?',
+      'Menurut Anda, apakah harga Rp. 20.000 tersebut wajar untuk satu sajian MASHRO?',
       'RADIO',
       PRICE_REASONABLE_OPTIONS,
       false,
@@ -317,7 +317,7 @@ export function buildMashroFormBatchRequests(): {
 
   requests.push(
     makeScaleItem(
-      'Seberapa besar minat Anda untuk membeli MASHRO pada kisaran harga Rp20.000–Rp25.000?',
+      'Seberapa besar kemungkinan Anda membeli MASHRO pada harga Rp. 20.000 tersebut?',
       1,
       5,
       'Sangat Tidak Berminat',

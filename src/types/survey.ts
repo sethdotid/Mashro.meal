@@ -3,6 +3,10 @@ export type ActivityOption = 'Karyawan' | 'Mahasiswa' | 'Dosen/Staf' | 'Lainnya'
 export type HasOrderedOption = 'Ya, pernah memesan' | 'Tidak, hanya mencicipi';
 export type SatietyOption = 'Tidak mengenyangkan' | 'Cukup mengenyangkan' | 'Sangat mengenyangkan';
 export type PriceReasonableOption = 'Sangat wajar' | 'Wajar' | 'Kurang wajar' | 'Tidak wajar';
+export type PriceWorthItOption =
+  | 'Worth it'
+  | 'Masih bisa lebih murah'
+  | 'Seharusnya bisa lebih baik harganya';
 export type PurchaseFrequencyOption =
   | 'Beberapa kali seminggu'
   | 'Sekali seminggu'
@@ -90,6 +94,7 @@ export interface SurveyDraft {
 
   // Section 5: Harga dan Minat Pembelian
   priceReasonable: PriceReasonableOption | null;
+  priceWorthIt: PriceWorthItOption | null;
   purchaseLikelihood: number | null;
   purchaseFrequency: PurchaseFrequencyOption | null;
   repurchaseIntention: RepurchaseIntentionOption | null;
@@ -142,6 +147,7 @@ export interface StoredSurveyResponse {
   ratingEaseOfOpening: number;
   ratingEatingConvenience: number;
   priceReasonable: PriceReasonableOption;
+  priceWorthIt?: PriceWorthItOption;
   purchaseLikelihood: number;
   purchaseFrequency: PurchaseFrequencyOption;
   repurchaseIntention: RepurchaseIntentionOption;
@@ -203,6 +209,7 @@ export const INITIAL_SURVEY_DRAFT: SurveyDraft = {
   ratingEaseOfOpening: null,
   ratingEatingConvenience: null,
   priceReasonable: null,
+  priceWorthIt: null,
   purchaseLikelihood: null,
   purchaseFrequency: null,
   repurchaseIntention: null,
@@ -324,6 +331,28 @@ export const PRICE_REASONABLE_OPTIONS: PriceReasonableOption[] = [
   'Wajar',
   'Kurang wajar',
   'Tidak wajar',
+];
+
+export const PRICE_WORTH_IT_OPTIONS: {
+  value: PriceWorthItOption;
+  label: string;
+  detail: string;
+}[] = [
+  {
+    value: 'Worth it',
+    label: 'Worth it',
+    detail: 'Harga Rp. 20.000 sudah sepadan dengan rasa, porsi, dan kualitas MASHRO',
+  },
+  {
+    value: 'Masih bisa lebih murah',
+    label: 'Masih bisa lebih murah',
+    detail: 'Sajian enak, namun harganya dirasa masih bisa sedikit lebih terjangkau',
+  },
+  {
+    value: 'Seharusnya bisa lebih baik harganya',
+    label: 'Seharusnya bisa lebih baik harganya',
+    detail: 'Kualitas/porsi atau penentuan harganya masih perlu disesuaikan lagi',
+  },
 ];
 
 export const PURCHASE_FREQUENCY_OPTIONS: PurchaseFrequencyOption[] = [
@@ -547,7 +576,7 @@ export const STEP_DEFINITIONS: Record<SurveyStepId, Omit<SurveyStepMeta, 'number
     id: 'pricing',
     title: 'Harga & Minat Pembelian',
     shortTitle: 'Harga & Minat',
-    subtitle: 'Evaluasi kisaran harga usulan Rp20.000–Rp25.000 dan minat pembelian Anda.',
+    subtitle: 'Evaluasi harga tetap Rp. 20.000 per mangkuk, kesepadanan harga, dan minat pembelian Anda.',
   },
   preorder: {
     id: 'preorder',

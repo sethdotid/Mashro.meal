@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Pencil, Utensils } from 'lucide-react';
-import { EditableText, useSiteContent } from '../context/SiteContentContext';
+import { AlertCircle, Check, Pencil, Utensils } from 'lucide-react';
+import {
+  EditableControlWrap,
+  EditableText,
+  useSiteContent,
+} from '../context/SiteContentContext';
 
 export function StarOrnament({ className = 'w-3.5 h-3.5 text-[#D6A23A]' }: { className?: string }) {
   return (
@@ -85,7 +89,17 @@ export function TopHeader({
   onNavigateHome: () => void;
   onStartSurvey: () => void;
 }) {
-  const { content, adminToken, inlineEditMode, setInlineEditMode, updateContent } = useSiteContent();
+  const {
+    content,
+    adminToken,
+    inlineEditMode,
+    savingContent,
+    lastSavedNotice,
+    saveError,
+    clearSaveFeedback,
+    setInlineEditMode,
+    updateContent,
+  } = useSiteContent();
 
   return (
     <header className="sticky top-0 z-30 bg-[#F7F1E3]/92 backdrop-blur-md border-b border-[#173E2C]/12">
@@ -93,8 +107,34 @@ export function TopHeader({
         <div className="bg-[#173E2C] text-[#F7F1E3] px-4 py-1.5 text-xs flex flex-wrap items-center justify-center gap-3 border-b border-[#D6A23A]/30">
           <span className="inline-flex items-center gap-1.5 font-medium">
             <Pencil className="w-3.5 h-3.5 text-[#D6A23A]" aria-hidden="true" />
-            <span>Mode Edit Langsung Aktif — Klik ikon pensil di teks atau tombol ubah gambar untuk mengedit</span>
+            <span>
+              Mode Edit Langsung Aktif — Klik ikon pensil di teks atau tombol untuk mengedit
+            </span>
           </span>
+          {savingContent && (
+            <span className="px-2.5 py-0.5 rounded-full bg-[#D6A23A]/20 text-[#F7F1E3] font-semibold">
+              Menyimpan...
+            </span>
+          )}
+          {!savingContent && lastSavedNotice && (
+            <span
+              role="status"
+              className="px-2.5 py-0.5 rounded-full bg-[#E5ECD9] text-[#173E2C] font-semibold inline-flex items-center gap-1"
+            >
+              <Check className="w-3 h-3" aria-hidden="true" />
+              <span>{lastSavedNotice}</span>
+            </span>
+          )}
+          {saveError && (
+            <button
+              type="button"
+              onClick={clearSaveFeedback}
+              className="px-2.5 py-0.5 rounded-full bg-red-100 text-red-900 font-semibold inline-flex items-center gap-1 cursor-pointer"
+            >
+              <AlertCircle className="w-3 h-3" aria-hidden="true" />
+              <span>{saveError}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setInlineEditMode(false)}
@@ -106,7 +146,7 @@ export function TopHeader({
         </div>
       )}
 
-      <div className="max-w-6xl mx-auto h-14 px-4 sm:px-6 flex items-center justify-between gap-8">
+      <div className="max-w-6xl mx-auto h-14 px-4 sm:px-6 flex items-center justify-between gap-6">
         <div className="flex items-center gap-2 shrink-0">
           {adminToken && inlineEditMode ? (
             <div className="flex items-center gap-2">
@@ -134,51 +174,99 @@ export function TopHeader({
         </div>
 
         {mode === 'landing' ? (
-          <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-[#173E2C]/75">
-            <a
-              href="#tentang-sajian"
-              className="hover:text-[#173E2C] transition-colors whitespace-nowrap shrink-0"
+          <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-[#173E2C]/75">
+            <EditableControlWrap
+              value={content.navCompositionLabel}
+              editLabel="Ubah label menu Komposisi Sajian"
+              onSave={(next) =>
+                updateContent((prev) => ({ ...prev, navCompositionLabel: next }))
+              }
             >
-              Komposisi Sajian
-            </a>
-            <a
-              href="#alur-survei"
-              className="hover:text-[#173E2C] transition-colors whitespace-nowrap shrink-0"
+              <a
+                href="#tentang-sajian"
+                className="hover:text-[#173E2C] transition-colors whitespace-nowrap shrink-0"
+              >
+                {content.navCompositionLabel}
+              </a>
+            </EditableControlWrap>
+
+            <EditableControlWrap
+              value={content.navFlowLabel}
+              editLabel="Ubah label menu Alur Survei"
+              onSave={(next) => updateContent((prev) => ({ ...prev, navFlowLabel: next }))}
             >
-              Alur Survei
-            </a>
-            <a
-              href="#privasi"
-              className="hover:text-[#173E2C] transition-colors whitespace-nowrap shrink-0"
+              <a
+                href="#alur-survei"
+                className="hover:text-[#173E2C] transition-colors whitespace-nowrap shrink-0"
+              >
+                {content.navFlowLabel}
+              </a>
+            </EditableControlWrap>
+
+            <EditableControlWrap
+              value={content.navPrivacyLabel}
+              editLabel="Ubah label menu Privasi Data"
+              onSave={(next) => updateContent((prev) => ({ ...prev, navPrivacyLabel: next }))}
             >
-              Privasi Data
-            </a>
+              <a
+                href="#privasi"
+                className="hover:text-[#173E2C] transition-colors whitespace-nowrap shrink-0"
+              >
+                {content.navPrivacyLabel}
+              </a>
+            </EditableControlWrap>
           </nav>
         ) : (
           <div className="hidden md:flex items-center text-sm font-medium text-[#173E2C]/65 whitespace-nowrap">
-            {mode === 'survey'
-              ? 'Survei Pengalaman Pelanggan'
-              : 'Portal Manajemen Respons'}
+            {mode === 'survey' ? (
+              <EditableText
+                value={content.surveyTopBarSubtitle}
+                editLabel="Ubah subjudul header survei"
+                onSave={(next) =>
+                  updateContent((prev) => ({ ...prev, surveyTopBarSubtitle: next }))
+                }
+              />
+            ) : (
+              <EditableText
+                value={content.adminTopBarSubtitle}
+                editLabel="Ubah subjudul header portal pemilik"
+                onSave={(next) =>
+                  updateContent((prev) => ({ ...prev, adminTopBarSubtitle: next }))
+                }
+              />
+            )}
           </div>
         )}
 
         <div className="shrink-0">
           {mode === 'landing' ? (
-            <button
-              type="button"
-              onClick={onStartSurvey}
-              className="px-5 py-2.5 rounded-full bg-[#173E2C] text-[#F7F1E3] text-xs sm:text-sm font-semibold hover:bg-[#0F2B1E] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#173E2C]"
+            <EditableControlWrap
+              value={content.heroCtaLabel}
+              editLabel="Ubah teks tombol Mulai Survei"
+              onSave={(next) => updateContent((prev) => ({ ...prev, heroCtaLabel: next }))}
             >
-              Mulai Survei
-            </button>
+              <button
+                type="button"
+                onClick={onStartSurvey}
+                className="px-5 py-2.5 rounded-full bg-[#173E2C] text-[#F7F1E3] text-xs sm:text-sm font-semibold hover:bg-[#0F2B1E] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#173E2C]"
+              >
+                {content.heroCtaLabel}
+              </button>
+            </EditableControlWrap>
           ) : (
-            <button
-              type="button"
-              onClick={onNavigateHome}
-              className="px-4 py-2 rounded-full border border-[#173E2C]/25 text-[#173E2C] text-xs sm:text-sm font-medium hover:bg-[#E5ECD9]/60 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            <EditableControlWrap
+              value={content.homeButtonLabel}
+              editLabel="Ubah teks tombol Beranda"
+              onSave={(next) => updateContent((prev) => ({ ...prev, homeButtonLabel: next }))}
             >
-              Beranda
-            </button>
+              <button
+                type="button"
+                onClick={onNavigateHome}
+                className="px-4 py-2 rounded-full border border-[#173E2C]/25 text-[#173E2C] text-xs sm:text-sm font-medium hover:bg-[#E5ECD9]/60 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                {content.homeButtonLabel}
+              </button>
+            </EditableControlWrap>
           )}
         </div>
       </div>
@@ -205,7 +293,7 @@ export function SiteFooter({ onOpenAdmin }: { onOpenAdmin: () => void }) {
             }
           />
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <EditableText
             value={content.footerSubtext}
             editLabel="Ubah teks footer kanan"
@@ -217,13 +305,24 @@ export function SiteFooter({ onOpenAdmin }: { onOpenAdmin: () => void }) {
             }
           />
           <span aria-hidden="true">·</span>
-          <button
-            type="button"
-            onClick={onOpenAdmin}
-            className="text-[#173E2C]/65 hover:text-[#173E2C] underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          <EditableControlWrap
+            value={content.portalButtonLabel}
+            editLabel="Ubah teks tombol Portal Pemilik"
+            onSave={(next) =>
+              updateContent((prev) => ({
+                ...prev,
+                portalButtonLabel: next,
+              }))
+            }
           >
-            Portal Pemilik
-          </button>
+            <button
+              type="button"
+              onClick={onOpenAdmin}
+              className="text-[#173E2C]/65 hover:text-[#173E2C] underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              {content.portalButtonLabel}
+            </button>
+          </EditableControlWrap>
         </div>
       </div>
     </footer>

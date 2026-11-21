@@ -5,6 +5,12 @@ import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 
+import {
+  FirestoreRestDocument,
+  decodeFirestoreDocument,
+  encodeFirestoreFields,
+} from './src/utils/firestoreRestCodec';
+
 dotenv.config();
 
 const PORT = Number(process.env.PORT || 3000);
@@ -15,6 +21,191 @@ const SESSION_SECRET =
 
 const DATA_DIR = path.resolve(process.cwd(), '.data');
 const STORE_PATH = path.join(DATA_DIR, 'mashro-store.json');
+const ADMIN_TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 hari (> 10 hari)
+
+interface FirebaseAppletConfig {
+  projectId: string;
+  apiKey: string;
+  firestoreDatabaseId: string;
+}
+
+function loadFirebaseConfig(): FirebaseAppletConfig | null {
+  try {
+    const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+    if (!fs.existsSync(cfgPath)) return null;
+    const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as Partial<FirebaseAppletConfig>;
+    if (!raw.projectId || !raw.apiKey || !raw.firestoreDatabaseId) return null;
+    return {
+      projectId: raw.projectId,
+      apiKey: raw.apiKey,
+      firestoreDatabaseId: raw.firestoreDatabaseId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const FIREBASE_CFG = loadFirebaseConfig();
+const VAULT_SEED =
+  process.env.MASHRO_VAULT_SECRET ||
+  (FIREBASE_CFG
+    ? `${FIREBASE_CFG.projectId}:${FIREBASE_CFG.firestoreDatabaseId}:mashro-firestore-vault-v1`
+    : SESSION_SECRET);
+const VAULT_ID = crypto
+  .createHmac('sha256', VAULT_SEED)
+  .update('mashro-firestore-vault-v1')
+  .digest('hex')
+  .slice(0, 48);
+
+function getFirestoreDocName(collectionRelPath: string, docId: string): string {
+  if (!FIREBASE_CFG) return '';
+  return `projects/${FIREBASE_CFG.projectId}/databases/${FIREBASE_CFG.firestoreDatabaseId}/documents/${collectionRelPath}/${docId}`;
+}
+
+function getFirestoreDocUrl(collectionRelPath: string, docId: string): string {
+  if (!FIREBASE_CFG) return '';
+  return `https://firestore.googleapis.com/v1/${getFirestoreDocName(collectionRelPath, docId)}?key=${encodeURIComponent(FIREBASE_CFG.apiKey)}`;
+}
+
+async function fetchJsonWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<{ status: number; data: Record<string, unknown> }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    return { status: res.status, data };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+interface FirestoreCommitWrite {
+  update: {
+    name: string;
+    fields: Record<string, unknown>;
+  };
+  currentDocument?: { exists: boolean };
+  updateTransforms?: { fieldPath: string; setToServerValue: 'REQUEST_TIME' }[];
+}
+
+async function firestoreCommit(writes: FirestoreCommitWrite[], timeoutMs = 3800): Promise<void> {
+  if (!FIREBASE_CFG || writes.length === 0) return;
+  const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_CFG.projectId}/databases/${FIREBASE_CFG.firestoreDatabaseId}/documents:commit?key=${encodeURIComponent(FIREBASE_CFG.apiKey)}`;
+  const { status, data } = await fetchJsonWithTimeout(
+    url,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ writes }),
+    },
+    timeoutMs
+  );
+  if (status < 200 || status >= 300) {
+    const errObj = data.error as { message?: string } | undefined;
+    throw new Error(errObj?.message || `Firestore commit failed with HTTP ${status}`);
+  }
+}
+
+async function firestoreGetDoc(
+  collectionRelPath: string,
+  docId: string,
+  timeoutMs = 3200
+): Promise<FirestoreRestDocument | null> {
+  if (!FIREBASE_CFG) return null;
+  const url = getFirestoreDocUrl(collectionRelPath, docId);
+  const { status, data } = await fetchJsonWithTimeout(url, { method: 'GET' }, timeoutMs);
+  if (status === 404) return null;
+  if (status < 200 || status >= 300) {
+    const errObj = data.error as { message?: string } | undefined;
+    throw new Error(errObj?.message || `Firestore get failed with HTTP ${status}`);
+  }
+  return data as unknown as FirestoreRestDocument;
+}
+
+async function firestoreDeleteDoc(
+  collectionRelPath: string,
+  docId: string,
+  timeoutMs = 3200
+): Promise<void> {
+  if (!FIREBASE_CFG) return;
+  const url = getFirestoreDocUrl(collectionRelPath, docId);
+  const { status, data } = await fetchJsonWithTimeout(url, { method: 'DELETE' }, timeoutMs);
+  if (status === 404) return;
+  if (status < 200 || status >= 300) {
+    const errObj = data.error as { message?: string } | undefined;
+    throw new Error(errObj?.message || `Firestore delete failed with HTTP ${status}`);
+  }
+}
+
+async function firestoreListCollection(
+  collectionRelPath: string,
+  timeoutMs = 4500
+): Promise<FirestoreRestDocument[]> {
+  if (!FIREBASE_CFG) return [];
+
+  const parts = collectionRelPath.split('/').filter(Boolean);
+  const collectionId = parts.pop();
+  if (!collectionId) return [];
+  const parentRel = parts.join('/');
+  const parentPrefix = parentRel
+    ? `projects/${FIREBASE_CFG.projectId}/databases/${FIREBASE_CFG.firestoreDatabaseId}/documents/${parentRel}`
+    : `projects/${FIREBASE_CFG.projectId}/databases/${FIREBASE_CFG.firestoreDatabaseId}/documents`;
+
+  const url = `https://firestore.googleapis.com/v1/${parentPrefix}:runQuery?key=${encodeURIComponent(FIREBASE_CFG.apiKey)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: 'source' },
+              op: 'EQUAL',
+              value: { stringValue: 'web_survey' },
+            },
+          },
+          limit: 500,
+        },
+      }),
+    });
+
+    if (res.status === 404) return [];
+    const raw = (await res.json().catch(() => [])) as unknown;
+    if (!res.ok) {
+      const errObj =
+        !Array.isArray(raw) && raw && typeof raw === 'object'
+          ? (raw as { error?: { message?: string } }).error
+          : Array.isArray(raw) && raw[0] && typeof raw[0] === 'object'
+          ? (raw[0] as { error?: { message?: string } }).error
+          : undefined;
+      throw new Error(errObj?.message || `Firestore runQuery failed with HTTP ${res.status}`);
+    }
+
+    if (!Array.isArray(raw)) return [];
+    const docs: FirestoreRestDocument[] = [];
+    for (const row of raw) {
+      if (row && typeof row === 'object' && 'document' in row) {
+        const doc = (row as { document?: FirestoreRestDocument }).document;
+        if (doc && typeof doc === 'object') {
+          docs.push(doc);
+        }
+      }
+    }
+    return docs;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 interface StoredSurveyDoc {
   id: string;
@@ -47,6 +238,7 @@ interface StoredSurveyDoc {
   ratingEaseOfOpening: number;
   ratingEatingConvenience: number;
   priceReasonable: string;
+  priceWorthIt: string;
   purchaseLikelihood: number;
   purchaseFrequency: string;
   repurchaseIntention: string;
@@ -102,7 +294,7 @@ function writeStore(next: PersistedStore): void {
   fs.renameSync(tmpPath, STORE_PATH);
 }
 
-function signAdminToken(ttlMs = 1000 * 60 * 60 * 24 * 7): { token: string; expiresAt: number } {
+function signAdminToken(ttlMs = ADMIN_TOKEN_TTL_MS): { token: string; expiresAt: number } {
   const expiresAt = Date.now() + ttlMs;
   const payload = Buffer.from(JSON.stringify({ role: 'owner', exp: expiresAt })).toString('base64url');
   const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
@@ -159,6 +351,11 @@ const VALID_ACTIVITIES = new Set(['Karyawan', 'Mahasiswa', 'Dosen/Staf', 'Lainny
 const VALID_HAS_ORDERED = new Set(['Ya, pernah memesan', 'Tidak, hanya mencicipi']);
 const VALID_SATIETY = new Set(['Tidak mengenyangkan', 'Cukup mengenyangkan', 'Sangat mengenyangkan']);
 const VALID_PRICE = new Set(['Sangat wajar', 'Wajar', 'Kurang wajar', 'Tidak wajar']);
+const VALID_PRICE_WORTH_IT = new Set([
+  'Worth it',
+  'Masih bisa lebih murah',
+  'Seharusnya bisa lebih baik harganya',
+]);
 const VALID_FREQ = new Set([
   'Beberapa kali seminggu',
   'Sekali seminggu',
@@ -256,6 +453,9 @@ function validateSurveySubmission(body: Record<string, unknown>): {
   if (typeof body.priceReasonable !== 'string' || !VALID_PRICE.has(body.priceReasonable)) {
     return { ok: false, error: 'Penilaian kewajaran harga tidak valid.' };
   }
+  if (typeof body.priceWorthIt !== 'string' || !VALID_PRICE_WORTH_IT.has(body.priceWorthIt)) {
+    return { ok: false, error: 'Penilaian kesepadanan harga Rp. 20.000 tidak valid.' };
+  }
   if (typeof body.purchaseFrequency !== 'string' || !VALID_FREQ.has(body.purchaseFrequency)) {
     return { ok: false, error: 'Frekuensi pembelian tidak valid.' };
   }
@@ -307,6 +507,7 @@ function validateSurveySubmission(body: Record<string, unknown>): {
     ratingEaseOfOpening: body.ratingEaseOfOpening as number,
     ratingEatingConvenience: body.ratingEatingConvenience as number,
     priceReasonable: body.priceReasonable,
+    priceWorthIt: body.priceWorthIt,
     purchaseLikelihood: body.purchaseLikelihood as number,
     purchaseFrequency: body.purchaseFrequency,
     repurchaseIntention: body.repurchaseIntention,
@@ -348,12 +549,227 @@ function validateSurveySubmission(body: Record<string, unknown>): {
   return { ok: true, doc };
 }
 
+function buildVaultResponseFirestoreFields(doc: StoredSurveyDoc): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    source: doc.source,
+    hasTasted: doc.hasTasted,
+    activity: doc.activity,
+    hasOrdered: doc.hasOrdered,
+    ratingCassava: doc.ratingCassava,
+    ratingChicken: doc.ratingChicken,
+    ratingPumpkinSauce: doc.ratingPumpkinSauce,
+    ratingVegetables: doc.ratingVegetables,
+    ratingAroma: doc.ratingAroma,
+    ratingTexture: doc.ratingTexture,
+    ratingVisual: doc.ratingVisual,
+    ratingFlavorCombo: doc.ratingFlavorCombo,
+    pickupTime: doc.pickupTime,
+    foodConditionOverall: doc.foodConditionOverall,
+    conditionCassava: doc.conditionCassava,
+    conditionChicken: doc.conditionChicken,
+    conditionVegetables: doc.conditionVegetables,
+    conditionSauce: doc.conditionSauce,
+    ratingPortion: doc.ratingPortion,
+    ratingIngredientCombo: doc.ratingIngredientCombo,
+    satietyLevel: doc.satietyLevel,
+    ratingPackPracticality: doc.ratingPackPracticality,
+    ratingPackStrength: doc.ratingPackStrength,
+    ratingLeakResistance: doc.ratingLeakResistance,
+    ratingEaseOfOpening: doc.ratingEaseOfOpening,
+    ratingEatingConvenience: doc.ratingEatingConvenience,
+    priceReasonable: doc.priceReasonable,
+    priceWorthIt: doc.priceWorthIt,
+    purchaseLikelihood: doc.purchaseLikelihood,
+    purchaseFrequency: doc.purchaseFrequency,
+    repurchaseIntention: doc.repurchaseIntention,
+    overallSatisfaction: doc.overallSatisfaction,
+    recommendScore: doc.recommendScore,
+    favoriteComponents: doc.favoriteComponents,
+  };
+
+  if (doc.activity === 'Lainnya' && doc.activityOther) {
+    payload.activityOther = doc.activityOther;
+  }
+  if (doc.hasOrdered === 'Ya, pernah memesan') {
+    payload.preOrderEase = doc.preOrderEase;
+    payload.preOrderResponsiveness = doc.preOrderResponsiveness;
+    payload.preOrderAccuracy = doc.preOrderAccuracy;
+    payload.preOrderPunctuality = doc.preOrderPunctuality;
+  }
+  if (doc.expressionMood) {
+    payload.expressionMood = doc.expressionMood;
+  }
+  if (doc.feedbackNotes) {
+    payload.feedbackNotes = doc.feedbackNotes;
+  }
+  if (doc.customAnswers && Object.keys(doc.customAnswers).length > 0) {
+    payload.customAnswers = doc.customAnswers;
+  }
+
+  return encodeFirestoreFields(payload);
+}
+
+function parseVaultResponseDoc(restDoc: FirestoreRestDocument): StoredSurveyDoc | null {
+  const name = typeof restDoc.name === 'string' ? restDoc.name : '';
+  const id = name.split('/').pop() ?? '';
+  if (!id) return null;
+  const decoded = decodeFirestoreDocument(restDoc);
+  const tsStr =
+    typeof decoded.createdAt === 'string'
+      ? decoded.createdAt
+      : typeof restDoc.createTime === 'string'
+      ? restDoc.createTime
+      : '';
+  const parsedMs = tsStr ? Date.parse(tsStr) : NaN;
+  const createdAtMs = Number.isFinite(parsedMs) ? parsedMs : Date.now();
+
+  return {
+    ...(decoded as unknown as Omit<StoredSurveyDoc, 'id' | 'createdAtMs'>),
+    id,
+    createdAtMs,
+  };
+}
+
+let siteConfigHydratedFromCloud = false;
+
+async function hydrateSiteConfigFromVault(): Promise<Record<string, unknown> | null> {
+  const store = readStore();
+  if (!FIREBASE_CFG) {
+    siteConfigHydratedFromCloud = true;
+    return store.siteConfig;
+  }
+
+  try {
+    const basePath = `owner_vault/${VAULT_ID}/site_config`;
+    const [mainDoc, heroImgDoc, compImgDoc] = await Promise.all([
+      firestoreGetDoc(basePath, 'main', 3200),
+      firestoreGetDoc(basePath, 'hero_image', 3200),
+      firestoreGetDoc(basePath, 'composition_image', 3200),
+    ]);
+
+    siteConfigHydratedFromCloud = true;
+
+    if (!mainDoc) {
+      return store.siteConfig;
+    }
+
+    const decodedMain = decodeFirestoreDocument(mainDoc);
+    const content =
+      decodedMain.content && typeof decodedMain.content === 'object'
+        ? ({ ...(decodedMain.content as Record<string, unknown>) } as Record<string, unknown>)
+        : null;
+
+    if (!content) {
+      return store.siteConfig;
+    }
+
+    if (heroImgDoc) {
+      const heroDecoded = decodeFirestoreDocument(heroImgDoc);
+      if (typeof heroDecoded.imageUrl === 'string' && heroDecoded.imageUrl.length > 0) {
+        content.heroImageUrl = heroDecoded.imageUrl;
+      }
+      if (typeof heroDecoded.imageAlt === 'string' && heroDecoded.imageAlt.length > 0) {
+        content.heroImageAlt = heroDecoded.imageAlt;
+      }
+    } else if (content.heroImageUrl === '__stored_in_image_doc__') {
+      delete content.heroImageUrl;
+    }
+
+    if (compImgDoc) {
+      const compDecoded = decodeFirestoreDocument(compImgDoc);
+      if (typeof compDecoded.imageUrl === 'string' && compDecoded.imageUrl.length > 0) {
+        content.compositionImageUrl = compDecoded.imageUrl;
+      }
+      if (typeof compDecoded.imageAlt === 'string' && compDecoded.imageAlt.length > 0) {
+        content.compositionImageAlt = compDecoded.imageAlt;
+      }
+    } else if (content.compositionImageUrl === '__stored_in_image_doc__') {
+      delete content.compositionImageUrl;
+    }
+
+    store.siteConfig = content;
+    writeStore(store);
+    return content;
+  } catch (err) {
+    console.warn('Gagal mengambil konfigurasi situs dari Firestore:', err instanceof Error ? err.message : err);
+    return store.siteConfig;
+  }
+}
+
+async function persistSiteConfigToVault(nextConfig: Record<string, unknown>): Promise<void> {
+  if (!FIREBASE_CFG) return;
+
+  const heroImageUrl =
+    typeof nextConfig.heroImageUrl === 'string' && nextConfig.heroImageUrl.trim()
+      ? nextConfig.heroImageUrl
+      : '/src/assets/images/mashro_hero_bowl_1795027773941.jpg';
+  const heroImageAlt =
+    typeof nextConfig.heroImageAlt === 'string' ? nextConfig.heroImageAlt.slice(0, 300) : 'Hero MASHRO';
+
+  const compImageUrl =
+    typeof nextConfig.compositionImageUrl === 'string' && nextConfig.compositionImageUrl.trim()
+      ? nextConfig.compositionImageUrl
+      : '/src/assets/images/mashro_botanical_ingredients_1795027774863.jpg';
+  const compImageAlt =
+    typeof nextConfig.compositionImageAlt === 'string'
+      ? nextConfig.compositionImageAlt.slice(0, 300)
+      : 'Komposisi Bahan MASHRO';
+
+  if (heroImageUrl.length > 745000 || compImageUrl.length > 745000) {
+    throw new Error('Ukuran gambar hasil crop melebihi batas penyimpanan cloud (745 KB). Pilih gambar atau zoom lebih kecil.');
+  }
+
+  const mainContentCopy: Record<string, unknown> = {
+    ...nextConfig,
+    heroImageUrl: heroImageUrl.startsWith('data:image/') ? '__stored_in_image_doc__' : heroImageUrl,
+    compositionImageUrl: compImageUrl.startsWith('data:image/') ? '__stored_in_image_doc__' : compImageUrl,
+  };
+
+  const basePath = `owner_vault/${VAULT_ID}/site_config`;
+  const writes: FirestoreCommitWrite[] = [
+    {
+      update: {
+        name: getFirestoreDocName(basePath, 'main'),
+        fields: encodeFirestoreFields({
+          schemaVersion: 1,
+          content: mainContentCopy,
+        }),
+      },
+      updateTransforms: [{ fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' }],
+    },
+    {
+      update: {
+        name: getFirestoreDocName(basePath, 'hero_image'),
+        fields: encodeFirestoreFields({
+          schemaVersion: 1,
+          imageUrl: heroImageUrl,
+          imageAlt: heroImageAlt,
+        }),
+      },
+      updateTransforms: [{ fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' }],
+    },
+    {
+      update: {
+        name: getFirestoreDocName(basePath, 'composition_image'),
+        fields: encodeFirestoreFields({
+          schemaVersion: 1,
+          imageUrl: compImageUrl,
+          imageAlt: compImageAlt,
+        }),
+      },
+      updateTransforms: [{ fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' }],
+    },
+  ];
+
+  await firestoreCommit(writes, 5500);
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '6mb' }));
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true });
+    res.json({ ok: true, firestoreVaultEnabled: Boolean(FIREBASE_CFG) });
   });
 
   // --- Admin PIN Auth Routes ---
@@ -376,67 +792,176 @@ async function startServer() {
     res.json({ authenticated: valid });
   });
 
-  // --- Survey Submission (Fast <50ms) & Admin Responses ---
-  app.post('/api/surveys', (req, res) => {
+  // --- Survey Submission (Fast <5s) & Durable Cloud Sync ---
+  app.post('/api/surveys', async (req, res) => {
     const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
     const validation = validateSurveySubmission(body);
     if (!validation.ok) {
       res.status(400).json({ error: validation.error });
       return;
     }
+
     const store = readStore();
     store.responses.unshift(validation.doc);
     writeStore(store);
+
+    if (FIREBASE_CFG) {
+      try {
+        await firestoreCommit(
+          [
+            {
+              update: {
+                name: getFirestoreDocName(`owner_vault/${VAULT_ID}/responses`, validation.doc.id),
+                fields: buildVaultResponseFirestoreFields(validation.doc),
+              },
+              currentDocument: { exists: false },
+              updateTransforms: [{ fieldPath: 'createdAt', setToServerValue: 'REQUEST_TIME' }],
+            },
+          ],
+          3200
+        );
+      } catch (err) {
+        console.warn(
+          'Peringatan sinkronisasi respons ke Firestore vault:',
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
     res.status(201).json({ id: validation.doc.id, createdAtMs: validation.doc.createdAtMs });
   });
 
-  app.get('/api/admin/responses', requireAdmin, (_req, res) => {
+  app.get('/api/admin/responses', requireAdmin, async (_req, res) => {
     const store = readStore();
-    const sorted = [...store.responses].sort((a, b) => b.createdAtMs - a.createdAtMs);
+    const mergedById = new Map<string, StoredSurveyDoc>();
+
+    for (const localDoc of store.responses) {
+      if (localDoc?.id) {
+        mergedById.set(localDoc.id, localDoc);
+      }
+    }
+
+    if (FIREBASE_CFG) {
+      try {
+        const cloudDocs = await firestoreListCollection(`owner_vault/${VAULT_ID}/responses`, 4200);
+        for (const cDoc of cloudDocs) {
+          const parsed = parseVaultResponseDoc(cDoc);
+          if (parsed?.id) {
+            mergedById.set(parsed.id, parsed);
+          }
+        }
+        store.responses = Array.from(mergedById.values()).sort((a, b) => b.createdAtMs - a.createdAtMs);
+        writeStore(store);
+      } catch (err) {
+        console.warn(
+          'Gagal memuat respons dari Firestore vault (pakai cache lokal):',
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
+    const sorted = Array.from(mergedById.values()).sort((a, b) => b.createdAtMs - a.createdAtMs);
     res.json({ responses: sorted });
   });
 
-  app.delete('/api/admin/responses/:id', requireAdmin, (req, res) => {
+  app.delete('/api/admin/responses/:id', requireAdmin, async (req, res) => {
     const targetId = String(req.params.id || '');
     const store = readStore();
-    const nextResponses = store.responses.filter((r) => r.id !== targetId);
-    store.responses = nextResponses;
+    store.responses = store.responses.filter((r) => r.id !== targetId);
     writeStore(store);
+
+    if (FIREBASE_CFG && targetId) {
+      try {
+        await firestoreDeleteDoc(`owner_vault/${VAULT_ID}/responses`, targetId, 3200);
+      } catch (err) {
+        console.warn(
+          'Gagal menghapus respons di Firestore vault:',
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
     res.json({ deleted: true, id: targetId });
   });
 
   // --- Editable Site Copy, Custom Questions & Cropped Images ---
-  app.get('/api/site-config', (_req, res) => {
+  app.get('/api/site-config', async (_req, res) => {
     const store = readStore();
+    if (!siteConfigHydratedFromCloud || !store.siteConfig) {
+      const hydrated = await hydrateSiteConfigFromVault();
+      res.json({ siteConfig: hydrated });
+      return;
+    }
     res.json({ siteConfig: store.siteConfig });
   });
 
-  app.put('/api/admin/site-config', requireAdmin, (req, res) => {
+  app.put('/api/admin/site-config', requireAdmin, async (req, res) => {
     const nextConfig = req.body?.siteConfig;
-    if (!nextConfig || typeof nextConfig !== 'object') {
+    if (!nextConfig || typeof nextConfig !== 'object' || Array.isArray(nextConfig)) {
       res.status(400).json({ error: 'Konfigurasi konten tidak valid.' });
       return;
     }
+
+    const configObj = nextConfig as Record<string, unknown>;
+    try {
+      await persistSiteConfigToVault(configObj);
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Gagal menyimpan perubahan ke database cloud. Silakan coba lagi.';
+      const statusCode = msg.includes('Ukuran gambar') ? 400 : 502;
+      res.status(statusCode).json({ error: msg });
+      return;
+    }
+
     const store = readStore();
-    store.siteConfig = nextConfig as Record<string, unknown>;
+    store.siteConfig = configObj;
+    siteConfigHydratedFromCloud = true;
     writeStore(store);
     res.json({ siteConfig: store.siteConfig });
   });
 
-  app.post('/api/admin/site-config/reset', requireAdmin, (_req, res) => {
+  app.post('/api/admin/site-config/reset', requireAdmin, async (_req, res) => {
+    if (FIREBASE_CFG) {
+      const basePath = `owner_vault/${VAULT_ID}/site_config`;
+      await Promise.allSettled([
+        firestoreDeleteDoc(basePath, 'main', 3200),
+        firestoreDeleteDoc(basePath, 'hero_image', 3200),
+        firestoreDeleteDoc(basePath, 'composition_image', 3200),
+      ]);
+    }
     const store = readStore();
     store.siteConfig = null;
+    siteConfigHydratedFromCloud = true;
     writeStore(store);
     res.json({ siteConfig: null });
   });
 
   // --- Google Form Share Link Config ---
-  app.get('/api/admin/google-form', requireAdmin, (_req, res) => {
+  app.get('/api/admin/google-form', requireAdmin, async (_req, res) => {
     const store = readStore();
+    if (!store.googleFormConfig && FIREBASE_CFG) {
+      try {
+        const gDoc = await firestoreGetDoc(`owner_vault/${VAULT_ID}/site_config`, 'google_form', 3000);
+        if (gDoc) {
+          const decoded = decodeFirestoreDocument(gDoc);
+          store.googleFormConfig = {
+            formId: String(decoded.formId ?? ''),
+            formTitle: String(decoded.formTitle ?? 'MASHRO – Survei Pengalaman dan Kepuasan Pelanggan'),
+            responderUri: String(decoded.responderUri ?? ''),
+            updatedAtMs: Date.now(),
+          };
+          writeStore(store);
+        }
+      } catch {
+        // fallback to local null
+      }
+    }
     res.json({ config: store.googleFormConfig });
   });
 
-  app.put('/api/admin/google-form', requireAdmin, (req, res) => {
+  app.put('/api/admin/google-form', requireAdmin, async (req, res) => {
     const body = req.body?.config;
     if (!body || typeof body !== 'object') {
       res.status(400).json({ error: 'Konfigurasi link Google Form tidak valid.' });
@@ -448,6 +973,37 @@ async function startServer() {
       responderUri: String(body.responderUri ?? '').trim().slice(0, 400),
       updatedAtMs: Date.now(),
     };
+
+    if (FIREBASE_CFG) {
+      try {
+        await firestoreCommit(
+          [
+            {
+              update: {
+                name: getFirestoreDocName(`owner_vault/${VAULT_ID}/site_config`, 'google_form'),
+                fields: encodeFirestoreFields({
+                  schemaVersion: 1,
+                  formId: config.formId,
+                  formTitle: config.formTitle,
+                  responderUri: config.responderUri,
+                }),
+              },
+              updateTransforms: [{ fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' }],
+            },
+          ],
+          3500
+        );
+      } catch (err) {
+        res.status(502).json({
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Gagal menyimpan tautan Google Form ke penyimpanan cloud.',
+        });
+        return;
+      }
+    }
+
     const store = readStore();
     store.googleFormConfig = config;
     writeStore(store);

@@ -35,6 +35,7 @@ function makeResponse(overrides: Partial<StoredSurveyResponse> = {}): StoredSurv
     ratingEaseOfOpening: 4,
     ratingEatingConvenience: 5,
     priceReasonable: 'Wajar',
+    priceWorthIt: 'Worth it',
     purchaseLikelihood: 5,
     purchaseFrequency: 'Sekali seminggu',
     repurchaseIntention: 'Pasti akan membeli lagi',
@@ -83,6 +84,8 @@ test('buildExcelWorkbookBytes emits valid PKZIP .xlsx with 3 sheets and proper X
   assert.ok(decoded.includes('Data Respons'));
   assert.ok(decoded.includes('Tren &amp; Jam Sajian'));
   assert.ok(decoded.includes('Momen Favorit &amp; Waktu'));
+  assert.ok(decoded.includes('Nilai Harga Rp. 20.000 (Worth It)'));
+  assert.ok(decoded.includes('Worth it'));
   assert.ok(decoded.includes('Rasa &lt;enak&gt; &amp; gurih!'));
   assert.ok(decoded.includes('Makan Siang'));
 });

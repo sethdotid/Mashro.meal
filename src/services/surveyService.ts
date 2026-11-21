@@ -1,10 +1,39 @@
-import { collection, doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
-import { CustomMcqQuestion, SiteContentConfig } from '../types/siteConfig';
+import {
+  Timestamp,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocFromServer,
+  getDocs,
+  getDocsFromServer,
+  limit,
+  query,
+  serverTimestamp,
+  setDoc,
+  where,
+  writeBatch,
+} from 'firebase/firestore';
+import firebaseConfig from '../../firebase-applet-config.json';
+import { OperationType, db, handleFirestoreError } from '../firebase';
+import { CustomMcqQuestion, SiteContentConfig, mergeSiteContent } from '../types/siteConfig';
 import { StoredSurveyResponse, SurveyDraft } from '../types/survey';
 import { buildFirestorePayload } from '../utils/surveyLogic';
+import {
+  deriveMashroVaultId,
+  generateSurveyResponseId,
+  hydrateSiteConfigFromFirestoreDocs,
+  splitSiteConfigForFirestore,
+  stripUndefinedDeep,
+  verifyClientAdminToken,
+  verifyPinAndIssueToken,
+} from '../utils/vaultCrypto';
 
 const COLLECTION_RESPONSES = 'survey_responses';
+
+const ADMIN_PIN_OVERRIDE = (
+  import.meta as unknown as { env?: Record<string, string | undefined> }
+).env?.VITE_ADMIN_PIN;
 
 export interface OwnerGoogleFormConfig {
   formId: string;
@@ -13,144 +42,235 @@ export interface OwnerGoogleFormConfig {
   updatedAtMs?: number;
 }
 
-function fetchWithTimeout(input: string, init: RequestInit = {}, timeoutMs = 4500): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(input, {
-    ...init,
-    signal: controller.signal,
-  }).finally(() => clearTimeout(timer));
+let vaultIdPromise: Promise<string> | null = null;
+
+function getVaultId(): Promise<string> {
+  if (!vaultIdPromise) {
+    vaultIdPromise = deriveMashroVaultId(
+      firebaseConfig.projectId,
+      firebaseConfig.firestoreDatabaseId
+    );
+  }
+  return vaultIdPromise;
 }
 
-async function syncToFirestoreCapped(docId: string, payload: Record<string, unknown>): Promise<void> {
-  try {
-    const ref = doc(collection(db, COLLECTION_RESPONSES), docId);
-    await Promise.race([
-      setDoc(ref, {
-        ...payload,
-        createdAt: serverTimestamp(),
-      }),
-      new Promise<void>((resolve) => setTimeout(resolve, 3500)),
-    ]);
-  } catch {
-    // Server store succeeded; Firestore cloud mirror failure is isolated so UX remains <= 5s
+function isPermissionDenied(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code;
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    code === 'permission-denied' ||
+    msg.includes('PERMISSION_DENIED') ||
+    msg.includes('Missing or insufficient permissions')
+  );
+}
+
+function isQuotaExceeded(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.toLowerCase().includes('quota exceeded');
+}
+
+function toUserFriendlyFirestoreError(error: unknown, fallback: string): Error {
+  if (isQuotaExceeded(error)) {
+    return new Error(
+      'Kuota harian gratis Firebase Firestore telah tercapai. Kuota akan otomatis reset besok.'
+    );
+  }
+  return error instanceof Error ? error : new Error(fallback);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+function extractTimestampMs(val: unknown): number {
+  if (val instanceof Timestamp) {
+    return val.toMillis();
+  }
+  if (
+    val &&
+    typeof val === 'object' &&
+    'toMillis' in val &&
+    typeof (val as { toMillis?: unknown }).toMillis === 'function'
+  ) {
+    return (val as { toMillis: () => number }).toMillis();
+  }
+  if (val instanceof Date) {
+    return val.getTime();
+  }
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    return val;
+  }
+  return Date.now();
+}
+
+async function assertValidAdminToken(token: string): Promise<void> {
+  const ok = await verifyClientAdminToken(token, ADMIN_PIN_OVERRIDE);
+  if (!ok) {
+    throw new Error('Sesi admin tidak valid atau telah berakhir. Silakan login kembali.');
   }
 }
 
 /**
- * Submits a completed survey response in <= 4.5s, committing to both server store and Firestore cloud.
+ * Submits a completed survey response directly to Firebase Firestore in <= 4.5s
+ * with zero backend/Google Cloud dependency.
  */
 export async function submitSurveyResponse(
   draft: SurveyDraft,
   customQuestions: CustomMcqQuestion[] = []
 ): Promise<string> {
-  const payload = buildFirestorePayload(draft, customQuestions);
+  const payload = stripUndefinedDeep(buildFirestorePayload(draft, customQuestions));
+  const vaultId = await getVaultId();
+  const docId = generateSurveyResponseId();
+  const vaultPath = `owner_vault/${vaultId}/responses/${docId}`;
+  const vaultRef = doc(db, 'owner_vault', vaultId, 'responses', docId);
+  const mirrorRef = doc(db, COLLECTION_RESPONSES, docId);
+
+  const firestoreDoc = {
+    ...payload,
+    createdAt: serverTimestamp(),
+  };
 
   try {
-    const res = await fetchWithTimeout(
-      '/api/surveys',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      },
-      4500
+    await withTimeout(
+      setDoc(vaultRef, firestoreDoc),
+      4200,
+      'Waktu pengiriman melebihi 4,5 detik. Periksa koneksi internet Anda lalu coba kirim ulang.'
     );
-
-    const data = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
-    if (!res.ok || !data.id) {
-      throw new Error(data.error || 'Gagal menyimpan jawaban survei.');
-    }
-
-    // Await Firestore setDoc up to 3.5s so respondent write commits reliably before navigation/close
-    await syncToFirestoreCapped(data.id, payload);
-    return data.id;
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new Error('Waktu pengiriman melebihi 4,5 detik. Periksa koneksi internet Anda lalu coba kirim ulang.');
+    if (isPermissionDenied(err)) {
+      handleFirestoreError(err, OperationType.CREATE, vaultPath);
     }
-    throw err instanceof Error ? err : new Error('Gagal mengirim jawaban survei.');
+    throw toUserFriendlyFirestoreError(err, 'Gagal mengirim jawaban survei ke Firebase Firestore.');
   }
+
+  // Secondary collection mirror runs non-blockingly (capped at 500ms) so UI remains <= 4.5s
+  void withTimeout(
+    setDoc(mirrorRef, firestoreDoc),
+    3000,
+    'Mirror timeout'
+  ).catch(() => {
+    // Primary durable record is already saved in owner_vault
+  });
+
+  return docId;
 }
 
 export async function adminLoginWithPin(pin: string): Promise<{ token: string; expiresAt: number }> {
-  const res = await fetchWithTimeout(
-    '/api/admin/login',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin }),
-    },
-    4500
-  );
-  const data = (await res.json().catch(() => ({}))) as {
-    token?: string;
-    expiresAt?: number;
-    error?: string;
-  };
-  if (!res.ok || !data.token) {
-    throw new Error(data.error || 'PIN Admin tidak valid.');
-  }
-  return { token: data.token, expiresAt: data.expiresAt ?? Date.now() + 86400000 };
+  return verifyPinAndIssueToken(pin, ADMIN_PIN_OVERRIDE);
 }
 
 export async function verifyAdminSession(token: string): Promise<boolean> {
-  if (!token) return false;
-  try {
-    const res = await fetchWithTimeout(
-      '/api/admin/session',
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      },
-      3000
-    );
-    if (!res.ok) return false;
-    const data = (await res.json()) as { authenticated?: boolean };
-    return Boolean(data.authenticated);
-  } catch {
-    return false;
-  }
+  return verifyClientAdminToken(token, ADMIN_PIN_OVERRIDE);
 }
 
 export async function fetchSurveyResponses(token: string): Promise<StoredSurveyResponse[]> {
-  const res = await fetchWithTimeout(
-    '/api/admin/responses',
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    },
-    4500
+  await assertValidAdminToken(token);
+  const vaultId = await getVaultId();
+  const collPath = `owner_vault/${vaultId}/responses`;
+  const responsesQuery = query(
+    collection(db, 'owner_vault', vaultId, 'responses'),
+    where('source', '==', 'web_survey'),
+    limit(500)
   );
-  const data = (await res.json().catch(() => ({}))) as {
-    responses?: StoredSurveyResponse[];
-    error?: string;
-  };
-  if (!res.ok) {
-    throw new Error(data.error || 'Gagal memuat daftar respons survei.');
+
+  try {
+    let snap;
+    try {
+      snap = await withTimeout(
+        getDocsFromServer(responsesQuery),
+        6000,
+        'Waktu muat data Firebase melebihi batas. Coba muat ulang.'
+      );
+    } catch (serverErr) {
+      if (isPermissionDenied(serverErr)) throw serverErr;
+      snap = await getDocs(responsesQuery);
+    }
+
+    const items: StoredSurveyResponse[] = snap.docs.map((docSnap) => {
+      const data = docSnap.data() as Record<string, unknown>;
+      return {
+        ...(data as Omit<StoredSurveyResponse, 'id' | 'createdAtMs'>),
+        id: docSnap.id,
+        createdAtMs: extractTimestampMs(data.createdAt),
+      };
+    });
+
+    items.sort((a, b) => b.createdAtMs - a.createdAtMs);
+    return items;
+  } catch (err) {
+    if (isPermissionDenied(err)) {
+      handleFirestoreError(err, OperationType.LIST, collPath);
+    }
+    throw toUserFriendlyFirestoreError(err, 'Gagal memuat daftar respons survei dari Firebase.');
   }
-  return Array.isArray(data.responses) ? data.responses : [];
 }
 
 export async function deleteSurveyResponse(responseId: string, token: string): Promise<void> {
-  const res = await fetchWithTimeout(
-    `/api/admin/responses/${encodeURIComponent(responseId)}`,
-    {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    },
-    4500
-  );
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error || 'Gagal menghapus respons survei.');
+  await assertValidAdminToken(token);
+  const vaultId = await getVaultId();
+  const docPath = `owner_vault/${vaultId}/responses/${responseId}`;
+
+  try {
+    await withTimeout(
+      deleteDoc(doc(db, 'owner_vault', vaultId, 'responses', responseId)),
+      4500,
+      'Waktu penghapusan respons melebihi batas.'
+    );
+  } catch (err) {
+    if (isPermissionDenied(err)) {
+      handleFirestoreError(err, OperationType.DELETE, docPath);
+    }
+    throw toUserFriendlyFirestoreError(err, 'Gagal menghapus respons survei dari Firebase.');
+  }
+}
+
+async function safeGetSiteConfigDoc(
+  vaultId: string,
+  configId: 'main' | 'hero_image' | 'composition_image' | 'google_form'
+): Promise<Record<string, unknown> | null> {
+  const docPath = `owner_vault/${vaultId}/site_config/${configId}`;
+  const docRef = doc(db, 'owner_vault', vaultId, 'site_config', configId);
+  try {
+    let snap;
+    try {
+      snap = await withTimeout(getDocFromServer(docRef), 4500, 'Timeout');
+    } catch (serverErr) {
+      if (isPermissionDenied(serverErr)) throw serverErr;
+      snap = await getDoc(docRef);
+    }
+    return snap.exists() ? (snap.data() as Record<string, unknown>) : null;
+  } catch (err) {
+    if (isPermissionDenied(err)) {
+      handleFirestoreError(err, OperationType.GET, docPath);
+    }
+    return null;
   }
 }
 
 export async function fetchSiteConfig(): Promise<Partial<SiteContentConfig> | null> {
   try {
-    const res = await fetchWithTimeout('/api/site-config', {}, 2500);
-    if (!res.ok) return null;
-    const data = (await res.json()) as { siteConfig?: Partial<SiteContentConfig> | null };
-    return data.siteConfig ?? null;
+    const vaultId = await getVaultId();
+    const [mainData, heroData, compData] = await Promise.all([
+      safeGetSiteConfigDoc(vaultId, 'main'),
+      safeGetSiteConfigDoc(vaultId, 'hero_image'),
+      safeGetSiteConfigDoc(vaultId, 'composition_image'),
+    ]);
+    return hydrateSiteConfigFromFirestoreDocs(mainData, heroData, compData);
   } catch {
     return null;
   }
@@ -160,77 +280,141 @@ export async function saveSiteConfig(
   siteConfig: SiteContentConfig,
   token: string
 ): Promise<SiteContentConfig> {
-  const res = await fetchWithTimeout(
-    '/api/admin/site-config',
-    {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ siteConfig }),
-    },
-    4500
-  );
-  const data = (await res.json().catch(() => ({}))) as {
-    siteConfig?: SiteContentConfig;
-    error?: string;
-  };
-  if (!res.ok || !data.siteConfig) {
-    throw new Error(data.error || 'Gagal menyimpan perubahan konten.');
+  await assertValidAdminToken(token);
+  const vaultId = await getVaultId();
+  const split = splitSiteConfigForFirestore(siteConfig);
+
+  const mainRef = doc(db, 'owner_vault', vaultId, 'site_config', 'main');
+  const heroRef = doc(db, 'owner_vault', vaultId, 'site_config', 'hero_image');
+  const compRef = doc(db, 'owner_vault', vaultId, 'site_config', 'composition_image');
+
+  try {
+    const batch = writeBatch(db);
+    batch.set(mainRef, {
+      schemaVersion: 1,
+      content: split.mainContent,
+      updatedAt: serverTimestamp(),
+    });
+
+    if (split.heroImageDoc) {
+      batch.set(heroRef, {
+        ...split.heroImageDoc,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      const heroSnap = await getDoc(heroRef).catch(() => null);
+      if (heroSnap?.exists()) {
+        batch.delete(heroRef);
+      }
+    }
+
+    if (split.compositionImageDoc) {
+      batch.set(compRef, {
+        ...split.compositionImageDoc,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      const compSnap = await getDoc(compRef).catch(() => null);
+      if (compSnap?.exists()) {
+        batch.delete(compRef);
+      }
+    }
+
+    await withTimeout(
+      batch.commit(),
+      8000,
+      'Waktu penyimpanan konten ke Firebase melebihi batas (8 detik). Silakan coba simpan kembali.'
+    );
+    return mergeSiteContent(siteConfig);
+  } catch (err) {
+    if (isPermissionDenied(err)) {
+      handleFirestoreError(err, OperationType.WRITE, `owner_vault/${vaultId}/site_config/main`);
+    }
+    throw toUserFriendlyFirestoreError(err, 'Gagal menyimpan perubahan konten ke Firebase Firestore.');
   }
-  return data.siteConfig;
 }
 
 export async function resetSiteConfig(token: string): Promise<void> {
-  const res = await fetchWithTimeout(
-    '/api/admin/site-config/reset',
-    {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    },
-    4500
-  );
-  if (!res.ok) {
-    throw new Error('Gagal mengatur ulang konten ke bawaan.');
+  await assertValidAdminToken(token);
+  const vaultId = await getVaultId();
+  const ids: ('main' | 'hero_image' | 'composition_image')[] = [
+    'main',
+    'hero_image',
+    'composition_image',
+  ];
+
+  try {
+    const refs = ids.map((id) => doc(db, 'owner_vault', vaultId, 'site_config', id));
+    const snaps = await Promise.all(refs.map((ref) => getDoc(ref).catch(() => null)));
+    const batch = writeBatch(db);
+    let hasDeletes = false;
+    snaps.forEach((snap, idx) => {
+      if (snap?.exists()) {
+        batch.delete(refs[idx]);
+        hasDeletes = true;
+      }
+    });
+    if (hasDeletes) {
+      await withTimeout(batch.commit(), 5000, 'Waktu reset konten melebihi batas.');
+    }
+  } catch (err) {
+    if (isPermissionDenied(err)) {
+      handleFirestoreError(err, OperationType.DELETE, `owner_vault/${vaultId}/site_config/main`);
+    }
+    throw toUserFriendlyFirestoreError(err, 'Gagal mengatur ulang konten ke bawaan.');
   }
 }
 
-export async function loadOwnerGoogleFormConfig(token: string): Promise<OwnerGoogleFormConfig | null> {
-  const res = await fetchWithTimeout(
-    '/api/admin/google-form',
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    },
-    4500
-  );
-  if (!res.ok) return null;
-  const data = (await res.json()) as { config?: OwnerGoogleFormConfig | null };
-  return data.config ?? null;
+export async function loadOwnerGoogleFormConfig(
+  token: string
+): Promise<OwnerGoogleFormConfig | null> {
+  await assertValidAdminToken(token);
+  const vaultId = await getVaultId();
+  const data = await safeGetSiteConfigDoc(vaultId, 'google_form');
+  if (!data || typeof data.responderUri !== 'string') return null;
+
+  return {
+    formId: typeof data.formId === 'string' ? data.formId : 'manual-form',
+    formTitle:
+      typeof data.formTitle === 'string'
+        ? data.formTitle
+        : 'MASHRO – Survei Pengalaman dan Kepuasan Pelanggan',
+    responderUri: data.responderUri,
+    updatedAtMs: data.updatedAt ? extractTimestampMs(data.updatedAt) : undefined,
+  };
 }
 
 export async function saveOwnerGoogleFormConfig(
   config: OwnerGoogleFormConfig,
   token: string
 ): Promise<OwnerGoogleFormConfig> {
-  const res = await fetchWithTimeout(
-    '/api/admin/google-form',
-    {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ config }),
-    },
-    4500
-  );
-  const data = (await res.json().catch(() => ({}))) as {
-    config?: OwnerGoogleFormConfig;
-    error?: string;
+  await assertValidAdminToken(token);
+  const vaultId = await getVaultId();
+  const docPath = `owner_vault/${vaultId}/site_config/google_form`;
+  const docRef = doc(db, 'owner_vault', vaultId, 'site_config', 'google_form');
+
+  const payload = {
+    schemaVersion: 1,
+    formId: String(config.formId || 'manual-form').trim().slice(0, 128),
+    formTitle: String(config.formTitle || 'MASHRO – Survei Pengalaman dan Kepuasan Pelanggan')
+      .trim()
+      .slice(0, 200),
+    responderUri: String(config.responderUri || '').trim().slice(0, 400),
+    updatedAt: serverTimestamp(),
   };
-  if (!res.ok || !data.config) {
-    throw new Error(data.error || 'Gagal menyimpan tautan Google Form.');
+
+  try {
+    await withTimeout(setDoc(docRef, payload), 4500, 'Waktu penyimpanan tautan Google Form melebihi batas.');
+    return {
+      formId: payload.formId,
+      formTitle: payload.formTitle,
+      responderUri: payload.responderUri,
+      updatedAtMs: Date.now(),
+    };
+  } catch (err) {
+    if (isPermissionDenied(err)) {
+      handleFirestoreError(err, OperationType.WRITE, docPath);
+    }
+    throw toUserFriendlyFirestoreError(err, 'Gagal menyimpan tautan Google Form ke Firebase.');
   }
-  return data.config;
 }

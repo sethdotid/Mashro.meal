@@ -18,7 +18,14 @@ import {
 import { DashboardAnalytics } from '../utils/surveyLogic';
 
 type BarMetricMode = 'pilar' | 'layanan' | 'produk';
-type PieMetricMode = 'ekspresi' | 'harga' | 'kondisi' | 'kepuasan' | 'beli_ulang' | 'aktivitas';
+type PieMetricMode =
+  | 'harga'
+  | 'nilai_harga'
+  | 'kondisi'
+  | 'ekspresi'
+  | 'kepuasan'
+  | 'beli_ulang'
+  | 'aktivitas';
 type TrendChartMode = 'skor' | 'volume';
 
 const MASHRO_CHART_COLORS = ['#173E2C', '#3A6B52', '#D6A23A', '#8AA67A', '#B7C9A2'];
@@ -182,6 +189,8 @@ export function DashboardSummaryCharts({ stats }: { stats: DashboardAnalytics })
         ? stats.expressionDistribution
         : pieMode === 'harga'
         ? stats.priceDistribution
+        : pieMode === 'nilai_harga'
+        ? stats.priceWorthItDistribution
         : pieMode === 'kondisi'
         ? stats.foodConditionOverallDistribution
         : pieMode === 'kepuasan'
@@ -307,6 +316,7 @@ export function DashboardSummaryCharts({ stats }: { stats: DashboardAnalytics })
               {(
                 [
                   { id: 'harga', label: 'Harga' },
+                  { id: 'nilai_harga', label: 'Worth It (Rp20rb)' },
                   { id: 'kondisi', label: 'Kondisi Sajian' },
                   { id: 'ekspresi', label: 'Ekspresi' },
                   { id: 'kepuasan', label: 'Kepuasan' },
